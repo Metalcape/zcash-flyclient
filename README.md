@@ -1,8 +1,8 @@
 # Zcash-flyclient
-An implementation in Python of the flyclient protocol for the Zcash blockchain. It is currently able to verify a flyclient proof provided by a full node. The purpose of this project is to create a proof-of-concept implementation of the flyclient protocol to be later referenced when developing a client intended to run on resource-constrained hardware.
+An implementation in Python of the [flyclient protocol](https://eprint.iacr.org/2019/226) for the Zcash blockchain. It is currently able to verify a flyclient proof provided by a full node. The purpose of this project is to create a proof-of-concept implementation of the flyclient protocol to be later referenced when developing a client intended to run on resource-constrained hardware.
 
 ## Usage
-To validate a blockchain using a flyclient proof, the script needs to download Merkle Mountain Range (MMR) tree nodes from a Zcash full node (`zebrad`). The current main branch of zebrad does not support downloading arbitrary MMR nodes, so you will need to use my own fork of `zebrad` which implements this function via RPC.
+To validate a blockchain using a flyclient proof, the script needs to download Merkle Mountain Range (MMR) tree nodes from a Zcash full node (`zebrad`). The current main branch of zebrad does not support downloading arbitrary MMR nodes, so you will need to use [my own fork of `zebrad`](https://github.com/Metalcape/zebra) which implements this function via RPC.
 
 > [!WARNING]
 > This fork of `zebrad` will update the database version to `26.1.0` to store history nodes (the MMR nodes). This is required for the flyclient protocol to work correctly. Do not point it to your main configuration file if you don't want this to happen to your main database.
