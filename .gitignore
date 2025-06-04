@@ -3,3 +3,4 @@ venv/
 zcash.conf
 __pycache__
 test*
+experiments/*.txt
