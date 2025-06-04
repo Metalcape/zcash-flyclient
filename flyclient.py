@@ -6,12 +6,31 @@ import math
 import numpy as np
 from secrets import SystemRandom
 import json
+import equihash
 
 CONF_PATH = "zcash.conf"
 HEARTWOOD_HEIGHT = 903000
 DELTA = 2**(-10)
 
+SOL_K = 9
+SOL_N = 200
+
 _secure_random = SystemRandom()
+
+# PoW
+def verify_pow(block_header: dict) -> bool:
+    pow_sol = bytes.fromhex(block_header["solution"])
+    pow_header = (
+        int(block_header["version"]).to_bytes(4, 'little', signed=True) 
+        + bytes.fromhex(block_header["previousblockhash"] )
+        + bytes.fromhex(block_header["merkleroot"])
+        + bytes.fromhex(block_header["blockcommitments"])
+        + int(block_header["time"]).to_bytes(4, 'little', signed=False)
+        + bytes.fromhex(block_header["bits"])
+        + bytes.fromhex(block_header["nonce"])
+    )
+
+    return equihash.verify(SOL_N, SOL_K, pow_header, pow_sol)
 
 # Difficulty
 def to_target(x: int) -> int:
@@ -44,14 +63,12 @@ def blocks_to_sample(activation_height, chaintip, random_blocks, tip_blocks):
 
 if __name__ == "__main__":
     client = ZcashClient.from_conf(CONF_PATH)
-    # client = ZcashClient("flyclient", "", 8232, "127.0.0.1")
+    client = ZcashClient("flyclient", "", 8232, "192.168.69.100")
 
-    # 1. Start by getting the consensus branch and the tip block header
     blockchaininfo: dict = client.send_command("getblockchaininfo")["result"]
     branch_id: str = blockchaininfo["consensus"]["chaintip"]
-    #tip_block = int(blockchaininfo["blocks"]) - 1
-    tip_block = 2876543
-    #tip_block = 2726449
+    tip_block = int(blockchaininfo["blocks"])
+    
     print(f"Branch id: {branch_id}")
     print(f"Tip block: {tip_block}")
     try:
@@ -63,9 +80,12 @@ if __name__ == "__main__":
     print("Tip header:")
     print(json.dumps(tip_header, indent=1))
     
-    # TODO: 2. authdataroot
+    # 2. Verify header PoW
+    if verify_pow(tip_header) is False:
+        print("Fatal: chaintip PoW verification failed")
+        exit(-1)
 
-    # TODO: Verify header PoW
+    # TODO: 2.1. authdataroot
 
     # Get the activation height
     activation_height: int
@@ -83,11 +103,13 @@ if __name__ == "__main__":
         print(f"Activation height: {activation_height}")
 
     mmr = Tree([], activation_height)
-    peaks = mmr.peaks_at(tip_block)
-    peak_heights = mmr.peak_heights_at(tip_block)
+
+    # The last block in the history tree is the one before the tip
+    peaks = mmr.peaks_at(tip_block - 1)
+    peak_heights = mmr.peak_heights_at(tip_block - 1)
     print(f"Peaks: {peaks}")
     print(f"Peak heights: {peak_heights}")
-    print(f"Node count: {mmr.node_count_at(tip_block)}")
+    print(f"Node count: {mmr.node_count_at(tip_block - 1)}")
 
     # 3. Choose random blocks 
     # TODO: Parametrize
@@ -102,7 +124,10 @@ if __name__ == "__main__":
             print(f"Response error when downloading header {block_height}: {e.response}")
             exit(-1)
 
-        # 5. TODO: Verify header PoW
+        # 5. Verify block PoW
+        if verify_pow(header) is False:
+            print(f"Fatal: PoW verification failed for block {block_height}")
+            exit(-1)
 
         # 6. TODO: authdataroot
 
@@ -111,7 +136,7 @@ if __name__ == "__main__":
         rightmost_leaf_node_index = mmr.node_index_of_block(block_height)
         print(f"Rightmost leaf index for block {block_height}: {rightmost_leaf_node_index}")
 
-        # Calculate the path from the leaf to the peak
+        # Calculate the peak height
         peak_index: int = 0
         peak_h: int = 0
         for (j, peak) in enumerate(peaks):
@@ -122,7 +147,6 @@ if __name__ == "__main__":
         
         print(f"Peak index for block {block_height}: {peak_index}")
         print(f"Node count at block {block_height}: {mmr.node_count_at(block_height - 1)}")
-        print(f"Node index of block {block_height}: {mmr.node_index_of_block(block_height)}")
 
         # Calculate the reverse path from the peak to the leaf
         node_path = []
