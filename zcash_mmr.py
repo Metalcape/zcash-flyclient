@@ -201,7 +201,7 @@ class Tree:
 
 
     def leaf_index_of_block(self, height: int) -> int | None:
-        diff = height - self.__activation_height__ + 1
+        diff = height - self.__activation_height__
         if diff < 0:
             return None
         else:
@@ -212,10 +212,11 @@ class Tree:
         if leaf_index is None:
             return None
         
+        leaf_count = leaf_index + 1
         heights = []
         for h in reversed(range(0, 31)):
             mask = 1 << h
-            if leaf_index & mask != 0:
+            if leaf_count & mask != 0:
                 heights.append(h)
         
         return heights
@@ -225,11 +226,12 @@ class Tree:
         if leaf_index is None:
             return None
         
+        leaf_count = leaf_index + 1
         peaks = []
         total_nodes = 0
         for h in reversed(range(0, 31)):
             mask = 1 << h
-            if leaf_index & mask != 0:
+            if leaf_count & mask != 0:
                 total_nodes += 2**(h + 1) - 1
                 peaks.append(total_nodes - 1)
 
@@ -244,11 +246,12 @@ class Tree:
         if leaf_index is None:
             return None
         
+        leaf_count = leaf_index + 1
         total_nodes = 0
         height = 0
         for h in reversed(range(0, 31)):
             mask = 1 << h
-            if leaf_index & mask != 0:
+            if leaf_count & mask != 0:
                 total_nodes += 2**(h + 1) - 1
                 height = h
         
