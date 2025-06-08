@@ -114,4 +114,6 @@ if __name__ == "__main__":
     # result = client.send_command("z_gettreestate", [sys.argv[1]])
     # result = client.send_command(sys.argv[1], sys.argv[2:])
 
-    if result: print(json.dumps(result, indent=4))
+    if result:
+        response = json.dumps(result, indent=4)
+        print(response)
