@@ -43,8 +43,8 @@ python ./zcash_client.py getblockchaininfo
 
 ## Roadmap
 
-- [ ] Verify sampled blocks' rightmost MMR tree leaf using the header's own `chainhistoryroot`
-- [ ] Verify block headers' proof-of-work
+- [x] Verify sampled blocks' rightmost MMR tree leaf using the header's own `chainhistoryroot`
+- [x] Verify block headers' proof-of-work
 - [ ] Request the finalized chain tip from `zebrad` (will probably require a new RPC method)
 - [ ] Use the `authdataroot` field to verify the `blockcommitments` field in the header (will require changes to `zebrad`'s state)
 - [ ] Implement difficulty-based sampling of blocks using the $(c, L)$ parametrized adversary model (will probably require changes to both RPC and state)
