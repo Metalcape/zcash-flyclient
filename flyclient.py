@@ -11,11 +11,7 @@ import equihash
 CONF_PATH = "zcash.conf"
 HEARTWOOD_HEIGHT = 903000
 
-DELTA = 2**(-10)
-LAMBDA = 50
-C = 0.5
-L = 50
-
+# Equihash parameters
 SOL_K = 9
 SOL_N = 200
 
@@ -30,25 +26,28 @@ class FlyclientProof:
     activation_height: int
     upgrade_name: str
     peaks: list[int]
+    peak_heights: list[int]
     blocks_to_sample: list[int]
+    upgrade_names_of_samples: dict[int, str]
     peak_indices: dict[int, int]
     sample_peaks: dict[int, list[int]]
-    ancestry_paths: dict[int, list]
     inclusion_paths: dict[int, list]
+    ancestry_paths: dict[int, list]
+    extended_ancestry_paths: dict[int, dict]
     rightmost_leaves: dict[int, int]
 
-    def __init__(self, client: ZcashClient, enable_logging = True):
+    def __init__(self, client: ZcashClient, override_chain_tip: int | None = None, enable_logging = True):
         self.client = client
         self.enable_logging = enable_logging
 
         # Get the tip and activation height
         self.blockchaininfo: dict = client.send_command("getblockchaininfo")["result"]
-        self.branch_id: str = self.blockchaininfo["consensus"]["chaintip"]
-        self.tip_height = int(self.blockchaininfo["blocks"]) - 100
-        if self.branch_id in self.blockchaininfo["upgrades"]:
-            v = self.blockchaininfo["upgrades"][self.branch_id]
-            self.activation_height = v["activationheight"]
-            self.upgrade_name = str(v["name"]).lower()
+        if override_chain_tip is not None and override_chain_tip > HEARTWOOD_HEIGHT:
+            self.tip_height = int(override_chain_tip)
+        else:
+            self.tip_height = int(self.blockchaininfo["blocks"]) - 100
+        
+        (self.branch_id, self.upgrade_name, self.activation_height) = self.get_network_upgrade_of_block(self.tip_height)
         
         if self.activation_height == 0:
             if enable_logging: print("Activation height not found.")
@@ -61,15 +60,15 @@ class FlyclientProof:
 
         # Get the peaks at the tip
         self.peaks = mmr.peaks_at(self.tip_height - 1)
-        peak_heights = mmr.peak_heights_at(self.tip_height - 1)
+        self.peak_heights = mmr.peak_heights_at(self.tip_height - 1)
         if enable_logging:
             print(f"Peaks: {self.peaks}")
-            print(f"Peak heights: {peak_heights}")
+            print(f"Peak heights: {self.peak_heights}")
             print(f"Node count: {mmr.node_count_at(self.tip_height - 1)}")
 
         # Choose random blocks 
-        # TODO: Parametrize
-        self.blocks_to_sample = blocks_to_sample(self.activation_height, self.tip_height, 10, 10)
+        self.blocks_to_sample = blocks_to_sample(HEARTWOOD_HEIGHT + 1, self.tip_height)
+        self.blocks_to_sample.sort()
         if enable_logging: print(f"Block headers to sample: {self.blocks_to_sample}")
 
         self.sample_peaks = dict()
@@ -77,7 +76,19 @@ class FlyclientProof:
         self.peak_indices = dict()
         self.inclusion_paths = dict()
         self.rightmost_leaves = dict()
+        self.extended_ancestry_paths = dict()
+        self.upgrade_names_of_samples = dict()
         for block_height in self.blocks_to_sample:
+            (_, upgrade, activation_height) = self.get_network_upgrade_of_block(block_height)
+
+            # Edge case: if the activation block is sampled, we must take the rightmost leaf
+            # of the previous upgrade's MMR tree
+            if activation_height == block_height:
+                (_, upgrade, activation_height) = self.get_network_upgrade_of_block(block_height - 1)
+                
+            mmr = Tree([], activation_height)
+            if enable_logging: print(f"Processing block {block_height} ({upgrade})")
+
             # Compute the ancestry proof indices (aka inclusion proof of rightmost leaf in tip MMR)
             # Each block is the rightmost leaf of the MMR rooted in its successor.
             rightmost_leaf_node_index = mmr.node_index_of_block(block_height - 1)
@@ -90,27 +101,53 @@ class FlyclientProof:
             if enable_logging: print(f"Inclusion path for {block_height}: {inclusion_path}")
             
             # Calculate the peak index and height of the leaf
-            peak_index: int = 0
-            peak_h: int = 0
-            for (j, peak) in enumerate(self.peaks):
-                peak_index = j
-                if rightmost_leaf_node_index < peak:
-                    peak_h = peak_heights[j]
-                    break
+            if upgrade == self.upgrade_name:
+                last_block = self.tip_height - 1
+            else:
+                next_activation_height = 0
+                (_, next_activation_height) = self.next_upgrade(upgrade)
+                last_block = next_activation_height - 1
+            (peak_index, peak_h) = self.get_peak_index_and_height(mmr, last_block, block_height - 1)
             
             if enable_logging: 
                 print(f"Peak index for block {block_height}: {peak_index}")
                 print(f"Node count at block {block_height}: {mmr.node_count_at(block_height - 1)}")
 
             # Calculate the path from the leaf to the peak
-            ancestry_path = self.path_to_root(self.peaks[peak_index], peak_h, rightmost_leaf_node_index)
+            ancestry_path = self.path_to_root(sample_peaks[peak_index], peak_h, rightmost_leaf_node_index)
             if enable_logging: print(f"Siblings for block header {block_height}: {ancestry_path}")
+
+            # Check if the ancestry path belongs to the latest upgrade. If not, we must keep
+            # climbing the MMR tree(s) until we get to the chaintip root.
+            extended_path = dict()
+            current_upgrade = upgrade
+            current_activation_height = activation_height
+            while current_upgrade != self.upgrade_name:
+                # Go up one network upgrade
+                (current_upgrade, current_activation_height) = self.next_upgrade(current_upgrade)
+                mmr = Tree([], current_activation_height)
+
+                # Get the last block covered by the network upgrade
+                if current_upgrade == self.upgrade_name:
+                    last_block = self.tip_height - 1
+                else:
+                    (_, next_activation_height) = self.next_upgrade(current_upgrade)
+                    last_block = next_activation_height - 1
+
+                # Get peak index and height of the first leaf
+                (ext_peak_index, ext_peak_h) = self.get_peak_index_and_height(mmr, last_block, current_activation_height)
+
+                # Get the path to the root
+                path = self.path_to_root(ext_peak_index, ext_peak_h, 0)
+                extended_path[current_upgrade] = path
 
             self.sample_peaks[block_height] = sample_peaks
             self.inclusion_paths[block_height] = inclusion_path
             self.peak_indices[block_height] = peak_index
             self.rightmost_leaves[block_height] = rightmost_leaf_node_index
             self.ancestry_paths[block_height] = ancestry_path
+            self.extended_ancestry_paths[block_height] = extended_path
+            self.upgrade_names_of_samples[block_height] = upgrade
 
     @staticmethod
     def path_to_root(peak: int, peak_height: int, leaf_index: int) -> list:
@@ -129,6 +166,50 @@ class FlyclientProof:
             h = h - 1
         node_path.reverse()
         return node_path
+
+    @staticmethod
+    def get_peak_index_and_height(tree: Tree, rightmost_block: int, block: int) -> tuple[int, int]:
+        peak_index: int = 0
+        peak_h: int = 0
+        peaks = tree.peaks_at(rightmost_block)
+        peak_heights = tree.peak_heights_at(block)
+        leaf = tree.node_index_of_block(block)
+        for (j, peak) in enumerate(peaks):
+            peak_index = j
+            if leaf < peak:
+                peak_h = peak_heights[j]
+                break
+        return (peak_index, peak_h)
+    
+    def next_upgrade(self, upgrade_name: str) -> tuple[str, int] | None:
+        for k, v in self.blockchaininfo['upgrades'].items():
+            if str(v['name']).lower() == upgrade_name:
+                keys = list(self.blockchaininfo['upgrades'].keys())
+                next_key_index = keys.index(k) + 1
+                if len(keys) > next_key_index:
+                    next_key = keys[next_key_index]
+                    return (
+                        str(self.blockchaininfo['upgrades'][next_key]['name']).lower(), 
+                        self.blockchaininfo['upgrades'][next_key]['activationheight']
+                    )
+                else:
+                    return (None, None)
+                
+        return (None, None)
+    
+    def get_network_upgrade_of_block(self, height) -> tuple[str, str, int]:
+        branch_id = next(iter(self.blockchaininfo['upgrades']))
+        for k, v in self.blockchaininfo['upgrades'].items():
+            if v['activationheight'] > height:
+                break
+            else:
+                branch_id = k
+        
+        return (
+            str(branch_id), 
+            str(self.blockchaininfo['upgrades'][branch_id]['name']).lower(), 
+            self.blockchaininfo['upgrades'][branch_id]['activationheight']
+        )
     
     def calculate_total_download_size_bytes(self) -> int:
         # version, hashPrevBlock, merkleRoot, blockCommitments, nTime, nBits, nonce, solutionSize, solution
@@ -138,21 +219,30 @@ class FlyclientProof:
         blockchaininfo_size = 4 + 4 + 8 + len(self.upgrade_name)
         authdataroot_size = 32
 
-        nodes_to_download = self.peaks.copy()
-        for _, l in self.sample_peaks.items():
-            nodes_to_download += l
-        for _, l in self.inclusion_paths.items():
-                nodes_to_download += l
-        for _, l in self.ancestry_paths.items():
-                nodes_to_download += l
-        for _, v in self.rightmost_leaves.items():
-            nodes_to_download.append(v)
-        
-        nodes_to_download = set(nodes_to_download)
+        upgrades_needed = set(self.upgrade_names_of_samples.values())
+        assert self.upgrade_name in upgrades_needed
+
+        nodes_to_download: dict[str, list] = dict()
+        for k in upgrades_needed:
+            nodes_to_download[k] = []
+
+        nodes_to_download[self.upgrade_name] += self.peaks
+        for k, l in self.sample_peaks.items():
+            nodes_to_download[self.upgrade_names_of_samples[k]] += l
+        for k, l in self.inclusion_paths.items():
+            nodes_to_download[self.upgrade_names_of_samples[k]] += l
+        for k, l in self.ancestry_paths.items():
+            nodes_to_download[self.upgrade_names_of_samples[k]] += l
+        for k, v in self.rightmost_leaves.items():
+            nodes_to_download[self.upgrade_name].append(v)
+
+        total_node_count = 0
+        for _, s in nodes_to_download.items():
+            total_node_count += len(set(s))
 
         return (
             (header_size + authdataroot_size) * (len(self.blocks_to_sample) + 1)
-            + node_size * len(nodes_to_download) 
+            + node_size * total_node_count 
             + blockchaininfo_size
         )
     
@@ -282,18 +372,36 @@ def calculate_work(nbits: str):
     return math.floor(2 ** 256 / (to_target(value) + 1))
 
 # Block sampling
-def sample(n: int, min: int, max: int):
+def sample(n: int, min: int, max: int, delta: float):
     if min <= 1:
         raise ValueError("min must be greater than 1.")
     
-    u_min = np.log(min - 1) / np.log(DELTA)
-    u_max = np.log(max - 1) / np.log(DELTA)
+    u_min = np.log(min - 1) / np.log(delta)
+    u_max = np.log(max - 1) / np.log(delta)
     u_samples = np.array([_secure_random.uniform(u_min, u_max) for _ in range(n)])
-    return 1 + DELTA**u_samples
+    return 1 + delta**u_samples
 
-def blocks_to_sample(activation_height, chaintip, random_blocks, tip_blocks):
-    deterministic = [i for i in range(chaintip - tip_blocks, chaintip)]
-    random = sample(random_blocks, activation_height, chaintip - tip_blocks)
+def blocks_to_sample(activation_height: int, chaintip: int):
+    # probability of failure is bounded by 2**(-lambda)
+    LAMBDA = 50
+    # n = chain length
+    N = chaintip
+    # C = attacker success probability
+    # L = delta*n = c**k * n
+    C = 0.5
+    # L is set to the usual size of the non finalized state after sync
+    L = 100
+    DELTA = L/N
+    K = math.log(DELTA, C)
+
+    m = math.ceil(LAMBDA / math.log(1 - (1 / math.log(L/N, C)), 0.5))
+    p_max = (1 - (1/K)) ** m
+
+    # Security property
+    assert p_max <= 2 ** (-LAMBDA)
+
+    deterministic = [i for i in range(chaintip - L, chaintip)]
+    random = sample(m, activation_height, chaintip - L, DELTA)
     return np.concatenate((random, np.asarray(deterministic, dtype=np.float64))).round().astype(int).tolist()
 
 if __name__ == "__main__":
