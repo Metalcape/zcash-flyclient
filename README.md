@@ -5,7 +5,7 @@ An implementation in Python of the [flyclient protocol](https://eprint.iacr.org/
 To validate a blockchain using a flyclient proof, the script needs to download Merkle Mountain Range (MMR) tree nodes from a Zcash full node (`zebrad`). The current main branch of zebrad does not support downloading arbitrary MMR nodes, so you will need to use [my own fork of `zebrad`](https://github.com/Metalcape/zebra) which implements this function via RPC.
 
 > [!WARNING]
-> This fork of `zebrad` will update the database version to `26.1.0` to store history nodes (the MMR nodes). This is required for the flyclient protocol to work correctly. Do not point it to your main configuration file if you don't want this to happen to your main database.
+> This fork of `zebrad` will update the database version to `27.1.0` to store history nodes (the MMR nodes). This is required for the flyclient protocol to work correctly. Do not point it to your main configuration file if you don't want this to happen to your main database.
 
 Clone and build `zebrad`:
 ```bash
@@ -45,6 +45,5 @@ python ./zcash_client.py getblockchaininfo
 
 - [x] Verify sampled blocks' rightmost MMR tree leaf using the header's own `chainhistoryroot`
 - [x] Verify block headers' proof-of-work
-- [ ] Request the finalized chain tip from `zebrad` (will probably require a new RPC method)
 - [ ] Use the `authdataroot` field to verify the `blockcommitments` field in the header (will require changes to `zebrad`'s state)
 - [ ] Implement difficulty-based sampling of blocks using the $(c, L)$ parametrized adversary model (will probably require changes to both RPC and state)
