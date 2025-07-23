@@ -36,9 +36,17 @@ class FlyclientProof:
     extended_ancestry_paths: dict[int, dict]
     rightmost_leaves: dict[int, int]
 
-    def __init__(self, client: ZcashClient, override_chain_tip: int | None = None, enable_logging = True):
+    def __init__(self, client: ZcashClient, override_chain_tip: int | None = None, enable_logging = True, c: float = 0.5, L: int = 100):
         self.client = client
         self.enable_logging = enable_logging
+
+        # Check that c and L are valid
+        if c <= 0 or c >= 1:
+            print("c should be between 0 and 1. Falling back to c = 0.5")
+            c = 0.5
+        if L <= 0:
+            print("L should be positive. Falling back to L = 100")
+            L = 100
 
         # Get the tip and activation height
         self.blockchaininfo: dict = client.send_command("getblockchaininfo")["result"]
@@ -67,7 +75,7 @@ class FlyclientProof:
             print(f"Node count: {mmr.node_count_at(self.tip_height - 1)}")
 
         # Choose random blocks 
-        self.blocks_to_sample = blocks_to_sample(HEARTWOOD_HEIGHT + 1, self.tip_height)
+        self.blocks_to_sample = blocks_to_sample(HEARTWOOD_HEIGHT + 1, self.tip_height, c, L)
         self.blocks_to_sample.sort()
         if enable_logging: print(f"Block headers to sample: {self.blocks_to_sample}")
 
@@ -381,20 +389,19 @@ def sample(n: int, min: int, max: int, delta: float):
     u_samples = np.array([_secure_random.uniform(u_min, u_max) for _ in range(n)])
     return 1 + delta**u_samples
 
-def blocks_to_sample(activation_height: int, chaintip: int):
+def blocks_to_sample(activation_height: int, chaintip: int, c: float, L: int):
     # probability of failure is bounded by 2**(-lambda)
     LAMBDA = 50
     # n = chain length
     N = chaintip
     # C = attacker success probability
+    # L = estimate of chain difficulty
     # L = delta*n = c**k * n
-    C = 0.5
-    # L is set to the usual size of the non finalized state after sync
-    L = 100
+    # L default is set to the usual size of the non finalized state after sync
     DELTA = L/N
-    K = math.log(DELTA, C)
+    K = math.log(DELTA, c)
 
-    m = math.ceil(LAMBDA / math.log(1 - (1 / math.log(L/N, C)), 0.5))
+    m = math.ceil(LAMBDA / math.log(1 - (1 / math.log(DELTA, c)), 0.5))
     p_max = (1 - (1/K)) ** m
 
     # Security property
