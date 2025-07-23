@@ -200,7 +200,7 @@ class Tree:
         return index - 2**h
 
 
-    def leaf_index_of_block(self, height: int) -> int | None:
+    def insertion_index_of_block(self, height: int) -> int | None:
         diff = height - self.__activation_height__
         if diff < 0:
             return None
@@ -208,30 +208,30 @@ class Tree:
             return diff
         
     def peak_heights_at(self, height: int) -> list[int] | None:
-        leaf_index = self.leaf_index_of_block(height)
-        if leaf_index is None:
+        insertion_index = self.insertion_index_of_block(height)
+        if insertion_index is None:
             return None
         
-        leaf_count = leaf_index + 1
+        block_count = insertion_index + 1
         heights = []
         for h in reversed(range(0, 31)):
             mask = 1 << h
-            if leaf_count & mask != 0:
+            if block_count & mask != 0:
                 heights.append(h)
         
         return heights
 
     def peaks_at(self, height: int) -> list[int] | None:
-        leaf_index = self.leaf_index_of_block(height)
-        if leaf_index is None:
+        insertion_index = self.insertion_index_of_block(height)
+        if insertion_index is None:
             return None
         
-        leaf_count = leaf_index + 1
+        block_count = insertion_index + 1
         peaks = []
         total_nodes = 0
         for h in reversed(range(0, 31)):
             mask = 1 << h
-            if leaf_count & mask != 0:
+            if block_count & mask != 0:
                 total_nodes += 2**(h + 1) - 1
                 peaks.append(total_nodes - 1)
 
@@ -242,16 +242,16 @@ class Tree:
         return peaks[-1] + 1 if peaks is not None else None
     
     def node_index_of_block(self, height: int) -> int | None:
-        leaf_index = self.leaf_index_of_block(height)
-        if leaf_index is None:
+        insertion_index = self.insertion_index_of_block(height)
+        if insertion_index is None:
             return None
         
-        leaf_count = leaf_index + 1
+        block_count = insertion_index + 1
         total_nodes = 0
         height = 0
         for h in reversed(range(0, 31)):
             mask = 1 << h
-            if leaf_count & mask != 0:
+            if block_count & mask != 0:
                 total_nodes += 2**(h + 1) - 1
                 height = h
         
