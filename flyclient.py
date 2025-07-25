@@ -31,6 +31,7 @@ class FlyclientProof:
     upgrade_names_of_samples: dict[int, str]
     peak_indices: dict[int, int]
     sample_peaks: dict[int, list[int]]
+    sample_peak_heights: dict[int, list[int]]
     inclusion_paths: dict[int, list]
     ancestry_paths: dict[int, list]
     extended_ancestry_paths: dict[int, dict]
@@ -80,6 +81,7 @@ class FlyclientProof:
         if enable_logging: print(f"Block headers to sample: {self.blocks_to_sample}")
 
         self.sample_peaks = dict()
+        self.sample_peak_heights = dict()
         self.ancestry_paths = dict()
         self.peak_indices = dict()
         self.inclusion_paths = dict()
@@ -150,6 +152,7 @@ class FlyclientProof:
                 extended_path[current_upgrade] = path
 
             self.sample_peaks[block_height] = sample_peaks
+            self.sample_peak_heights[block_height] = sample_heights
             self.inclusion_paths[block_height] = inclusion_path
             self.peak_indices[block_height] = peak_index
             self.rightmost_leaves[block_height] = rightmost_leaf_node_index
@@ -219,7 +222,7 @@ class FlyclientProof:
             self.blockchaininfo['upgrades'][branch_id]['activationheight']
         )
     
-    def calculate_total_download_size_bytes(self) -> int:
+    def calculate_total_download_size_bytes(self, cache_nodes = True, derive_parents = True) -> int:
         # version, hashPrevBlock, merkleRoot, blockCommitments, nTime, nBits, nonce, solutionSize, solution
         header_size = 4 + 32 + 32 + 32 + 4 + 4 + 32 + 3 + 1344      
         node_size = 244
@@ -230,23 +233,53 @@ class FlyclientProof:
         upgrades_needed = set(self.upgrade_names_of_samples.values())
         assert self.upgrade_name in upgrades_needed
 
-        nodes_to_download: dict[str, list] = dict()
+        nodes: dict[str, list] = dict()
+        heights: dict[str, list] = dict()
+        nodes_with_heights: dict[str, list[tuple]] = dict()
         for k in upgrades_needed:
-            nodes_to_download[k] = []
+            nodes[k] = []
+            heights[k] = []
 
-        nodes_to_download[self.upgrade_name] += self.peaks
+        nodes[self.upgrade_name] += self.peaks
+        heights[self.upgrade_name] += self.peak_heights
         for k, l in self.sample_peaks.items():
-            nodes_to_download[self.upgrade_names_of_samples[k]] += l
+            nodes[self.upgrade_names_of_samples[k]] += l
+            heights[self.upgrade_names_of_samples[k]] += list(range(0, len(l)))
         for k, l in self.inclusion_paths.items():
-            nodes_to_download[self.upgrade_names_of_samples[k]] += l
+            nodes[self.upgrade_names_of_samples[k]] += [n[0] for n in l]
+            heights[self.upgrade_names_of_samples[k]] += list(range(0, len(l)))
         for k, l in self.ancestry_paths.items():
-            nodes_to_download[self.upgrade_names_of_samples[k]] += l
+            nodes[self.upgrade_names_of_samples[k]] += [n[0] for n in l]
+            heights[self.upgrade_names_of_samples[k]] += list(range(0, len(l)))
         for k, v in self.rightmost_leaves.items():
-            nodes_to_download[self.upgrade_name].append(v)
+            nodes[self.upgrade_name].append(v)
+            heights[self.upgrade_name].append(0)
 
+        for k in upgrades_needed:
+            nodes_with_heights[k] = list(zip(nodes[k], heights[k]))
+
+        # Try to calculate a parent if both children are present
+        while derive_parents:
+            finished = True
+            for k, s in nodes_with_heights.items():
+                for i, h in s:
+                    if h == 0:
+                        continue
+                    left_child = (i - 2**h, h - 1)
+                    right_child = (i - 1, h - 1)
+                    if i in nodes[k] and left_child in s and right_child in s:
+                            finished = False
+                            nodes[k] = [j for j in nodes[k] if j != i]
+            if finished:
+                break   
+        
+        # Count nodes, cache duplicates if requested
         total_node_count = 0
-        for _, s in nodes_to_download.items():
-            total_node_count += len(set(s))
+        for _, s in nodes.items():
+            if cache_nodes:
+                total_node_count += len(set(s))
+            else:
+                total_node_count += len(s)
 
         return (
             (header_size + authdataroot_size) * (len(self.blocks_to_sample) + 1)
