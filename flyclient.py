@@ -88,6 +88,7 @@ class FlyclientProof:
         self.rightmost_leaves = dict()
         self.extended_ancestry_paths = dict()
         self.upgrade_names_of_samples = dict()
+        self.upgrades_needed = set()
         for block_height in self.blocks_to_sample:
             (_, upgrade, activation_height) = self.get_network_upgrade_of_block(block_height)
 
@@ -159,6 +160,9 @@ class FlyclientProof:
             self.ancestry_paths[block_height] = ancestry_path
             self.extended_ancestry_paths[block_height] = extended_path
             self.upgrade_names_of_samples[block_height] = upgrade
+            self.upgrades_needed.add(upgrade)
+            for k in extended_path.keys():
+                self.upgrades_needed.add(k)
 
     @staticmethod
     def path_to_root(peak: int, peak_height: int, leaf_index: int) -> list:
@@ -230,13 +234,10 @@ class FlyclientProof:
         blockchaininfo_size = 4 + 4 + 8 + len(self.upgrade_name)
         authdataroot_size = 32
 
-        upgrades_needed = set(self.upgrade_names_of_samples.values())
-        assert self.upgrade_name in upgrades_needed
-
         nodes: dict[str, list] = dict()
         heights: dict[str, list] = dict()
         nodes_with_heights: dict[str, list[tuple]] = dict()
-        for k in upgrades_needed:
+        for k in self.upgrades_needed:
             nodes[k] = []
             heights[k] = []
 
@@ -251,31 +252,26 @@ class FlyclientProof:
         for k, l in self.ancestry_paths.items():
             nodes[self.upgrade_names_of_samples[k]] += [n[0] for n in l]
             heights[self.upgrade_names_of_samples[k]] += list(range(0, len(l)))
+        for _, d in self.extended_ancestry_paths.items():
+            for upgrade, l in d.items():
+                nodes[upgrade] += [n[0] for n in l]
+                heights[upgrade] += list(range(0, len(l)))
         for k, v in self.rightmost_leaves.items():
             nodes[self.upgrade_name].append(v)
             heights[self.upgrade_name].append(0)
 
-        for k in upgrades_needed:
-            nodes_with_heights[k] = list(zip(nodes[k], heights[k]))
+        for k in self.upgrades_needed:
+            l = list(zip(nodes[k], heights[k]))
+            nodes_with_heights[k] = set(l) if cache_nodes else l
 
-        # Try to calculate a parent if both children are present
-        while derive_parents:
-            finished = True
-            for k, s in nodes_with_heights.items():
-                for i, h in s:
-                    if h == 0:
-                        continue
-                    left_child = (i - 2**h, h - 1)
-                    right_child = (i - 1, h - 1)
-                    if i in nodes[k] and left_child in s and right_child in s:
-                            finished = False
-                            nodes[k] = [j for j in nodes[k] if j != i]
-            if finished:
-                break   
-        
+        # Try to calculate a parent if both children are present       
+        if derive_parents:
+            for k in self.upgrades_needed:
+                nodes_with_heights[k] = remove_parents(nodes_with_heights[k])
+
         # Count nodes, cache duplicates if requested
         total_node_count = 0
-        for _, s in nodes.items():
+        for _, s in nodes_with_heights.items():
             if cache_nodes:
                 total_node_count += len(set(s))
             else:
@@ -286,6 +282,26 @@ class FlyclientProof:
             + node_size * total_node_count 
             + blockchaininfo_size
         )
+    
+    def mean_ancestry_length(self) -> float:
+        ancestry_lengths = []
+        for b in self.blocks_to_sample:
+            normal = len(self.ancestry_paths[b])
+            ext = 0
+            if len(self.extended_ancestry_paths[b]) > 0:
+                for _, sub_p in self.extended_ancestry_paths[b].items():
+                    ext += len(sub_p)
+            else:
+                ext = 0
+            ancestry_lengths.append(normal + ext)
+        return np.mean(ancestry_lengths)
+    
+    def mean_inclusion_length(self) -> float:
+        lengths = [len(p) for _, p in self.inclusion_paths.items()]
+        return np.mean(lengths)
+
+    def sample_count(self) -> int:
+        return len(self.blocks_to_sample)
     
     def download_header(self, height) -> dict | None:
         try:
@@ -382,6 +398,18 @@ class FlyclientProof:
                 print(f"Fatal: tip chainhistoryroot verification failed for block at height {block_height}")
                 return False
         return True
+    
+def remove_parents(nodes_with_height: list[tuple]) -> list[tuple]:
+    if nodes_with_height is not None and len(nodes_with_height) > 0:
+        for i, h in nodes_with_height:
+            if h == 0:
+                continue
+            left_child = (i - 2**h, h - 1)
+            right_child = (i - 1, h - 1)
+            if left_child in nodes_with_height and right_child in nodes_with_height:
+                nodes_with_height.remove((i, h))
+                return remove_parents(nodes_with_height)
+    return nodes_with_height
 
 # PoW
 def verify_pow(block_header: dict) -> bool:
