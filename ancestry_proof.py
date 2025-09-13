@@ -58,11 +58,11 @@ class AncestryProof:
 
         # Calculate and compare root hash
         root = self.get_root()
-        print("Root node:")
-        print(root.to_json())
+        # print("Root node:")
+        # print(root.to_json())
         calculated_root_hash = hash(root.serialize_for_hashing(), branch_id)[::-1]
-        print(f"Calculated hash: {calculated_root_hash.hex()}")
-        print(f"Expected tip root hash: {root_hash}")
+        # print(f"Calculated hash: {calculated_root_hash.hex()}")
+        # print(f"Expected root hash: {root_hash}")
         if calculated_root_hash != bytes.fromhex(root_hash):
             print("Root hash mismatch")
             return False

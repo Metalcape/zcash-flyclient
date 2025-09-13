@@ -54,6 +54,9 @@ class ZcashClient:
                     params[1] = int(params[1])
                 if len(params) >= 3:
                     params[2] = int(params[2])
+            case "getauthdataroot" | "getshieldedtxcount":
+                if len(params) > 0:
+                    params[0] = str(params[0])
 
         """Send a JSON-RPC command to a Zcash full node."""
         url = f"http://{self.rpcbind}:{self.rpcport}/"
@@ -93,6 +96,13 @@ class ZcashClient:
         response = self.send_command("gethistorynode", [network_upgrade, index, (1 if verbose else 0)])
         if response["error"] is None:
             return response["result"] if verbose else bytes.fromhex(response["result"])[9:]
+        else:
+            raise requests.exceptions.RequestException(response=response["error"])
+    
+    def download_extra_data(self, command: str, height: int):
+        response = self.send_command(command, [height])
+        if response["error"] is None:
+            return response["result"]
         else:
             raise requests.exceptions.RequestException(response=response["error"])
 

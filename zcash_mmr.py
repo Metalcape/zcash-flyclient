@@ -40,6 +40,17 @@ def hash(data, branch_id_hex: str) -> bytes:
     person = bytearray('ZcashHistory', encoding='ascii') + branch_id.to_bytes(4, 'little')
     return hashlib.blake2b(data, digest_size=32, person=person).digest()
 
+def generate_block_commitments(chain_history_root: str, auth_data_root: str) -> str:
+    chain_history_bytes = bytes.fromhex(chain_history_root)[::-1]
+    auth_data_bytes = bytes.fromhex(auth_data_root)[::-1]
+    assert len(chain_history_bytes) == len(auth_data_bytes) == 32
+    
+    person = bytearray('ZcashBlockCommit', encoding='ascii')
+    data = chain_history_bytes + auth_data_bytes + (b'\x00' * 32)
+    commitment = bytearray(hashlib.blake2b(data, digest_size=32, person=person).digest())
+
+    return commitment[::-1].hex()
+
 class Node:
     # commitments
     hashSubtreeCommitment: bytes
