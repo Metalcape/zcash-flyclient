@@ -24,18 +24,22 @@ class FlyclientProof:
     branch_id: str
     activation_height: int
     upgrade_name: str
-    peaks: list[int]
-    peak_heights: list[int]
-    blocks_to_sample: list[int]
-    upgrade_names_of_samples: dict[int, str]
-    peak_indices: dict[int, int]
-    sample_peaks: dict[int, list[int]]
-    sample_peak_heights: dict[int, list[int]]
-    inclusion_paths: dict[int, list]
-    ancestry_paths: dict[int, list]
-    extended_peaks: dict[int, dict]
-    extended_ancestry_paths: dict[int, dict]
-    rightmost_leaves: dict[int, int]
+
+    peaks: list[int]    # Peaks at chaintip - 1
+    peak_heights: list[int] # Heights of peaks at chaintip - 1
+    blocks_to_sample: list[int] # list of blocks to sample
+    upgrade_names_of_samples: dict[int, str]    # Upgrade of each sampled block
+    peak_indices: dict[int, int]    # Map: sampled block -> index of its peak in the chaintip MMR
+
+    ancestry_paths: dict[int, list] # Inclusion paths from the block leaf to the closest peak
+    extended_peaks: dict[int, dict] # Map: sampled block -> (Map: network upgrade -> peaks at last block)
+    extended_ancestry_paths: dict[int, dict]    # Map: sampled block -> (Map: network upgrade -> inclusion path to closest peak)
+    peaks_at_block: dict[int, int]    # Map: sampled block -> peaks at (leaf index - 1) (for chainhistoryroot verification)
+
+    leaves: dict[int, int]
+
+    node_cache: dict[str, dict[int, Node]]
+    block_cache: dict[int, dict]
 
     def __init__(self, client: ZcashClient, override_chain_tip: int | None = None, enable_logging = True, c: float = 0.5, L: int = 100):
         self.client = client
@@ -81,37 +85,29 @@ class FlyclientProof:
         self.blocks_to_sample.sort()
         if enable_logging: print(f"Block headers to sample: {self.blocks_to_sample}")
 
-        self.sample_peaks = dict()
-        self.sample_peak_heights = dict()
         self.ancestry_paths = dict()
         self.peak_indices = dict()
         self.inclusion_paths = dict()
-        self.rightmost_leaves = dict()
         self.extended_ancestry_paths = dict()
         self.extended_peaks = dict()
         self.upgrade_names_of_samples = dict()
         self.upgrades_needed = set()
+        self.peaks_at_block = dict()
+        self.leaves = dict()
         for block_height in self.blocks_to_sample:
-            (_, upgrade, activation_height) = self.get_network_upgrade_of_block(block_height)
 
-            # Edge case: if the activation block is sampled, we must take the rightmost leaf
-            # of the previous upgrade's MMR tree
-            if activation_height == block_height:
-                (_, upgrade, activation_height) = self.get_network_upgrade_of_block(block_height - 1)
-                
+            (_, upgrade, activation_height) = self.get_network_upgrade_of_block(block_height)
+            
             mmr = Tree([], activation_height)
             if enable_logging: print(f"Processing block {block_height} ({upgrade})")
 
-            # Compute the ancestry proof indices (aka inclusion proof of rightmost leaf in tip MMR)
-            # Each block is the rightmost leaf of the MMR rooted in its successor.
-            rightmost_leaf_node_index = mmr.node_index_of_block(block_height - 1)
-            if enable_logging: print(f"Rightmost leaf index for block {block_height}: {rightmost_leaf_node_index}")
+            # Get the peaks at (leaf - 1) to verify the root
+            self.peaks_at_block[block_height] = mmr.peaks_at(block_height - 1)                
 
-            # Inclusion proof of the leaf in the sampled block header
-            sample_peaks = mmr.peaks_at(block_height - 1)
-            sample_heights = mmr.peak_heights_at(block_height - 1)
-            inclusion_path = self.path_to_root(sample_peaks[-1], sample_heights[-1], rightmost_leaf_node_index)
-            if enable_logging: print(f"Inclusion path for {block_height}: {inclusion_path}")
+            # Compute the ancestry proof indices
+            leaf_index = mmr.node_index_of_block(block_height)
+            if enable_logging: print(f"Leaf index for block {block_height}: {leaf_index}")
+            self.leaves[block_height] = leaf_index
             
             # Calculate the peak index and height of the leaf
             if upgrade == self.upgrade_name:
@@ -120,15 +116,15 @@ class FlyclientProof:
                 (_, next_activation_height) = self.next_upgrade(upgrade)
                 last_block = next_activation_height - 1
             
-            (peak_index, peak_h) = self.get_peak_index_and_height(mmr, last_block, block_height - 1)
+            (peak_index, peak_h) = self.get_peak_index_and_height(mmr, last_block, block_height)
             if enable_logging: 
                 print(f"Peak index for block {block_height}: {peak_index}")
-                print(f"Node count at block {block_height}: {mmr.node_count_at(block_height - 1)}")
+                print(f"Node count at block {block_height}: {mmr.node_count_at(block_height)}")
 
             # Calculate the path to the chain tip root
             # the leaf is either the leftmost one (before current upgrade) or the one at the sampled block
             if upgrade == self.upgrade_name:
-                ancestry_path = self.path_to_root(self.peaks[peak_index], peak_h, rightmost_leaf_node_index)
+                ancestry_path = self.path_to_root(self.peaks[peak_index], peak_h, leaf_index)
             else:
                 ancestry_path = self.path_to_root(self.peaks[0], self.peak_heights[0], 0)
             if enable_logging: print(f"Siblings for block header {block_height}: {ancestry_path}")
@@ -151,10 +147,9 @@ class FlyclientProof:
                 peak_heights = mmr.peak_heights_at(last_block)
                 
                 if current_upgrade == upgrade:
-                    path = self.path_to_root(peaks[peak_index], peak_h, rightmost_leaf_node_index)
+                    path = self.path_to_root(peaks[peak_index], peak_h, leaf_index)
                 else:
                     path = self.path_to_root(peaks[0], peak_heights[0], 0)
-
 
                 # Get the path to the root (the peak is always the first one)
                 extended_path[current_upgrade] = path
@@ -163,11 +158,7 @@ class FlyclientProof:
                 # Go up one network upgrade
                 (current_upgrade, current_activation_height) = self.next_upgrade(current_upgrade)
 
-            self.sample_peaks[block_height] = sample_peaks
-            self.sample_peak_heights[block_height] = sample_heights
-            self.inclusion_paths[block_height] = inclusion_path
             self.peak_indices[block_height] = peak_index
-            self.rightmost_leaves[block_height] = rightmost_leaf_node_index
             self.ancestry_paths[block_height] = ancestry_path
             self.extended_ancestry_paths[block_height] = extended_path
             self.extended_peaks[block_height] = extended_peaks
@@ -264,9 +255,6 @@ class FlyclientProof:
 
         nodes[self.upgrade_name] += self.peaks
         heights[self.upgrade_name] += self.peak_heights
-        for k, l in self.sample_peaks.items():
-            nodes[self.upgrade_names_of_samples[k]] += l
-            heights[self.upgrade_names_of_samples[k]] += list(range(0, len(l)))
         for k, l in self.inclusion_paths.items():
             nodes[self.upgrade_names_of_samples[k]] += [n[0] for n in l]
             heights[self.upgrade_names_of_samples[k]] += list(range(0, len(l)))
@@ -277,9 +265,6 @@ class FlyclientProof:
             for upgrade, l in d.items():
                 nodes[upgrade] += [n[0] for n in l]
                 heights[upgrade] += list(range(0, len(l)))
-        for k, v in self.rightmost_leaves.items():
-            nodes[self.upgrade_name].append(v)
-            heights[self.upgrade_name].append(0)
 
         for k in self.upgrades_needed:
             l = list(zip(nodes[k], heights[k]))
@@ -325,11 +310,16 @@ class FlyclientProof:
         return len(self.blocks_to_sample)
     
     def download_header(self, height) -> dict | None:
+        if height in self.block_cache.keys():
+            return self.block_cache[height]
+
         try:
             header = self.client.download_header(height, True)
         except requests.exceptions.RequestException as e:
             print(f"Response error when downloading chain tip: {e.response}")
             return None
+        
+        self.block_cache[height] = header
         return header
     
     def download_auth_data_root(self, height) -> str | None:
@@ -351,25 +341,36 @@ class FlyclientProof:
     def download_peaks(self, upgrade_name: str, peak_indices: list) -> list[Node] | None:
         peak_nodes: list[Node] = []
         for i in peak_indices:
-            try:
-                node_json = client.download_node(upgrade_name, i, True)
-            except requests.exceptions.RequestException as e:
-                print(f"Response error when downloading peak node {i}: {e.response}")
-                return None
-            peak_nodes.append(Node.from_dict(node_json))
+            if i in self.node_cache[upgrade_name].keys():
+                peak_nodes.append(self.node_cache[upgrade_name][i])
+            else:
+                try:
+                    node_json = client.download_node(upgrade_name, i, True)
+                except requests.exceptions.RequestException as e:
+                    print(f"Response error when downloading peak node {i}: {e.response}")
+                    return None
+                node = Node.from_dict(node_json)
+                peak_nodes.append(node)
+                self.node_cache[upgrade_name][i] = node
         return peak_nodes
 
     def download_ancestry_proof(self, upgrade_name: str, nodes: list) -> list[AncestryNode] | None:
         siblings: list[AncestryNode] = []
         ancestry_node: AncestryNode = None
         for n, t in nodes:
-            try:
-                json_obj = client.download_node(upgrade_name, n, True)
-            except requests.exceptions.RequestException as e:
-                print(f"Response error when downloading history node {n}: {e.response}")
-                return None
-            ancestry_node = AncestryNode(n, Node.from_dict(json_obj), t)
-            siblings.append(ancestry_node)
+            if n in self.node_cache[upgrade_name].keys():
+                ancestry_node = AncestryNode(n, self.node_cache[upgrade_name][n], t)
+                siblings.append(ancestry_node)
+            else:
+                try:
+                    json_obj = client.download_node(upgrade_name, n, True)
+                except requests.exceptions.RequestException as e:
+                    print(f"Response error when downloading history node {n}: {e.response}")
+                    return None
+                node = Node.from_dict(json_obj)
+                ancestry_node = AncestryNode(n, node, t)
+                siblings.append(ancestry_node)
+                self.node_cache[upgrade_name][n] = node
         return siblings
     
     def verify_header(self, block_header: dict) -> bool:
@@ -384,6 +385,11 @@ class FlyclientProof:
         return verify_pow(block_header)
     
     def download_and_verify(self) -> bool:
+        self.node_cache = dict()
+        for u in self.upgrades_needed:
+            self.node_cache[u] = dict()
+        self.block_cache = dict()
+
         # Download and verify tip header
         chaintip_header = self.download_header(self.tip_height)
         if chaintip_header is None: return False
@@ -430,24 +436,21 @@ class FlyclientProof:
                     print("Fatal: root node header verification failed")
                     return False
 
-            # Download leaf node
+            # TODO: Download extra info needed to calculate the leaf from the block, and generate the leaf
             try:
-                leaf_node = Node.from_dict(client.download_node(current_upgrade, self.rightmost_leaves[block_height], True))
+                leaf_node = Node.from_dict(client.download_node(current_upgrade, self.leaves[block_height], True))
+                # tx_info = self.download_tx_count(block_height)
             except requests.exceptions.RequestException as e:
-                print(f"Response error when downloading rightmost leaf node: {e.response}")
+                print(f"Response error when downloading transaction info: {e.response}")
                 return False
             
-            # Download peaks at sampled block
-            peak_nodes_at_sample = self.download_peaks(current_upgrade, self.sample_peaks[block_height])
+            # Download peaks at sampled block - 1
+            peak_nodes_at_sample = self.download_peaks(current_upgrade, self.peaks_at_block[block_height])
             if peak_nodes_at_sample is None: return False
 
-            # Download MMR nodes for inclusion proof in sampled header
-            siblings_at_sample = self.download_ancestry_proof(current_upgrade, self.inclusion_paths[block_height])
-            if siblings_at_sample is None: return False
-
             # Check chain history root for sampled header
-            inclusion_proof = AncestryProof(leaf_node, peak_nodes_at_sample, siblings_at_sample, len(peak_nodes_at_sample) - 1)
-            if not inclusion_proof.verify_chain_history_root(header["chainhistoryroot"], current_branch_id):
+            sample_proof = AncestryProof(None, peak_nodes_at_sample, None, None)
+            if not sample_proof.verify_root_from_peaks(header["chainhistoryroot"], current_branch_id):
                 print(f"Fatal: sample chainhistoryroot verification failed for block at height {block_height}")
                 return False
 
@@ -485,7 +488,7 @@ class FlyclientProof:
                 # If we are in the first network upgrade, get the leaf before the block
                 # Otherwise, get the leftmost leaf
                 if current_upgrade == self.upgrade_names_of_samples[block_height]:
-                    leaf_index = self.rightmost_leaves[block_height]
+                    leaf_index = self.leaves[block_height]
                     peak_index = self.peak_indices[block_height]
                 else:
                     leaf_index = 0
@@ -547,20 +550,6 @@ def verify_pow(block_header: dict) -> bool:
     )
 
     return equihash.verify(SOL_N, SOL_K, pow_header, pow_sol)
-
-# Difficulty
-def to_target(x: int) -> int:
-    mask = 1 << 23
-    if x & mask == mask:
-        return 0
-    else:
-        mantissa = x & (mask - 1)
-        exponent = math.floor(x / (1 << 24)) - 3
-        return mantissa * 256 ** exponent
-
-def calculate_work(nbits: str):
-    value = int(nbits, base=16)
-    return math.floor(2 ** 256 / (to_target(value) + 1))
 
 # Block sampling
 def sample(n: int, min: int, max: int, delta: float):

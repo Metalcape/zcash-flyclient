@@ -34,6 +34,20 @@ class AncestryProof:
         for p in self.peaks[1:]:
             bag = make_parent(bag, p)
         return bag
+    
+    def verify_root_from_peaks(self, root_hash: str, branch_id: str):
+        # Calculate and compare root hash
+        root = self.get_root()
+        # print("Root node:")
+        # print(root.to_json())
+        calculated_root_hash = hash(root.serialize_for_hashing(), branch_id)[::-1]
+        # print(f"Calculated hash: {calculated_root_hash.hex()}")
+        # print(f"Expected root hash: {root_hash}")
+        if calculated_root_hash != bytes.fromhex(root_hash):
+            print("Root hash mismatch")
+            return False
+        else:
+            return True
 
     def verify_chain_history_root(self, root_hash: str, branch_id: str) -> bool:
         # For each node in path to peak, combine with previous node
@@ -55,16 +69,5 @@ class AncestryProof:
         else:
             # If path is empty, peak must be the last one
             assert self.peak_index == len(self.peaks) - 1
-
-        # Calculate and compare root hash
-        root = self.get_root()
-        # print("Root node:")
-        # print(root.to_json())
-        calculated_root_hash = hash(root.serialize_for_hashing(), branch_id)[::-1]
-        # print(f"Calculated hash: {calculated_root_hash.hex()}")
-        # print(f"Expected root hash: {root_hash}")
-        if calculated_root_hash != bytes.fromhex(root_hash):
-            print("Root hash mismatch")
-            return False
-        else:
-            return True
+        
+        return self.verify_root_from_peaks(root_hash, branch_id)

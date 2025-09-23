@@ -1,8 +1,23 @@
 import hashlib
 import json
 import struct
+import math
 
 SERIALIZED_SIZE = 244
+
+# Difficulty
+def to_target(x: int) -> int:
+    mask = 1 << 23
+    if x & mask == mask:
+        return 0
+    else:
+        mantissa = x & (mask - 1)
+        exponent = math.floor(x / (1 << 24)) - 3
+        return mantissa * 256 ** exponent
+
+def calculate_work(nbits: str):
+    value = int(nbits, base=16)
+    return math.floor(2 ** 256 / (to_target(value) + 1))
 
 # Integer serialization
 def serialize_uint32(n: int) -> bytes:
@@ -70,6 +85,26 @@ class Node:
     nOrchardTxCount: None | int # number of Orchard transactions in block
 
     consensusBranchId: bytes
+
+    @staticmethod
+    def from_block_header(block: dict, sapling_tx_count: int, orchard_tx_count: int):
+        self = Node()
+        self.hashSubtreeCommitment = bytes.fromhex(block["hash"])[::-1] # Internal byte order
+        self.nEarliestTimestamp = block["time"]
+        self.nLatestTimestamp = block["time"]
+        self.nEarliestTargetBits = block["bits"]
+        self.nLatestTargetBits = block["bits"]
+        self.hashEarliestSaplingRoot = bytes.fromhex(block["finalsaplingroot"])[::-1]   # Internal byte order
+        self.hashLatestSaplingRoot = bytes.fromhex(block["finalsaplingroot"])[::-1] # Internal byte order
+        self.nSubTreeTotalWork = calculate_work(block["bits"])
+        self.nEarliestHeight = block["height"]
+        self.nLatestHeight = block["height"]
+        self.nSaplingTxCount = sapling_tx_count
+        self.hashEarliestOrchardRoot = bytes.fromhex(block["start_orchard_root"]) if int(block["start_orchard_root"], base=16) != 0 else None
+        self.hashLatestOrchardRoot = bytes.fromhex(block["end_orchard_root"]) if int(block["end_orchard_root"], base=16) != 0 else None
+        self.nOrchardTxCount = orchard_tx_count
+        self.consensusBranchId = bytes.fromhex(block['consensus_branch_id'])
+        return self
 
     @staticmethod
     def from_dict(data: dict):
