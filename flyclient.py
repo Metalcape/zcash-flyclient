@@ -436,10 +436,13 @@ class FlyclientProof:
                     print("Fatal: root node header verification failed")
                     return False
 
-            # TODO: Download extra info needed to calculate the leaf from the block, and generate the leaf
+            # Download the leaf, and verify that it corresponds to the header using the hash field
             try:
-                leaf_node = Node.from_dict(client.download_node(current_upgrade, self.leaves[block_height], True))
-                # tx_info = self.download_tx_count(block_height)
+                node_dict = client.download_node(current_upgrade, self.leaves[block_height], True)
+                if verify_hash(node_dict, header) == False:
+                    print(f"Invalid hash for leaf node {self.leaves[block_height]} at block height {block_height}")
+                    return False
+                leaf_node = Node.from_dict(node_dict)
             except requests.exceptions.RequestException as e:
                 print(f"Response error when downloading transaction info: {e.response}")
                 return False
@@ -551,8 +554,15 @@ def verify_pow(block_header: dict) -> bool:
 
     return equihash.verify(SOL_N, SOL_K, pow_header, pow_sol)
 
+def verify_hash(leaf_node: dict, block_header: dict):
+        # Assumes that the block hash was already verified
+        header_hash = bytes.fromhex(block_header["hash"])
+        subtree_commitment = bytes.fromhex(leaf_node["subtree_commitment"])[::-1]
+        return header_hash == subtree_commitment
+    
 # Block sampling
 def sample(n: int, min: int, max: int, delta: float):
+
     if min <= 1:
         raise ValueError("min must be greater than 1.")
     
