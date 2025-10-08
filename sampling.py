@@ -32,7 +32,6 @@ def verify_hash(leaf_node: dict, block_header: dict):
     
 # Block sampling
 def sample(n: int, min: int, max: int, delta: float):
-
     if min <= 1:
         raise ValueError("min must be greater than 1.")
     
@@ -41,7 +40,7 @@ def sample(n: int, min: int, max: int, delta: float):
     u_samples = np.array([_secure_random.uniform(u_min, u_max) for _ in range(n)])
     return 1 + delta**u_samples
 
-def blocks_to_sample(activation_height: int, chaintip: int, c: float, L: int):
+def blocks_to_sample(activation_height: int, chaintip: int, c: float, L: int) -> list[int]:
     # probability of failure is bounded by 2**(-lambda)
     LAMBDA = 50
     # n = chain length
@@ -54,11 +53,28 @@ def blocks_to_sample(activation_height: int, chaintip: int, c: float, L: int):
     K = math.log(DELTA, c)
 
     m = math.ceil(LAMBDA / math.log(1 - (1 / math.log(DELTA, c)), 0.5))
-    p_max = (1 - (1/K)) ** m
 
     # Security property
+    p_max = (1 - (1/K)) ** m
     assert p_max <= 2 ** (-LAMBDA)
 
     deterministic = [i for i in range(chaintip - L, chaintip)]
     random = sample(m, activation_height, chaintip - L, DELTA)
     return np.concatenate((random, np.asarray(deterministic, dtype=np.float64))).round().astype(int).tolist()
+
+def difficulty_to_sample(min_work: int, chaintip_total_work: int, c: float, L: int) -> list[int]:
+    LAMBDA = 50
+    # n equals the total cumulative difficulty in this case
+    N = chaintip_total_work
+    # L in this case is the fraction of difficulty that is always sampled
+    DELTA = L/N
+    K = math.log(DELTA, c)
+
+    m = math.ceil(LAMBDA / math.log(1 - (1 / math.log(DELTA, c)), 0.5))
+
+    # Security property
+    p_max = (1 - (1/K)) ** m
+    assert p_max <= 2 ** (-LAMBDA)
+
+    random = sample(m, min_work, chaintip_total_work - L, DELTA)
+    return random.round().astype(int).tolist()

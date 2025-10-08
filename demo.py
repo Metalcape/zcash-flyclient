@@ -14,8 +14,8 @@ class FlyclientDemo(FlyclientProof):
     node_cache: dict[str, dict[int, Node]]
     block_cache: dict[int, dict]
 
-    def __init__(self, client: ZcashClient, override_chain_tip: int | None = None, enable_logging = True, c: float = 0.5, L: int = 100):
-        super(FlyclientDemo, self).__init__(client, override_chain_tip, enable_logging, c, L)
+    def __init__(self, client: ZcashClient, c: float = 0.5, L: int = 100, override_chain_tip: int | None = None, enable_logging = True, difficulty_aware: bool = False):
+        super(FlyclientDemo, self).__init__(client, c, L, override_chain_tip, enable_logging, difficulty_aware)
         super(FlyclientDemo, self).prefetch()
     
     def download_auth_data_root(self, height) -> str | None:
@@ -240,6 +240,6 @@ if __name__ == "__main__":
     client = ZcashClient.from_conf(CONF_PATH)
     # client = ZcashClient("flyclient", "", 8232, "127.0.0.1")
     
-    proof = FlyclientDemo(client, None, True)
+    proof = FlyclientDemo(client, difficulty_aware=True)
     if proof.download_and_verify() is True:
         print("Success!")

@@ -54,7 +54,7 @@ class ZcashClient:
                     params[1] = int(params[1])
                 if len(params) >= 3:
                     params[2] = int(params[2])
-            case "getauthdataroot" | "getshieldedtxcount":
+            case "getauthdataroot" | "getshieldedtxcount" | "gettotalwork" | "getfirstblockwithtotalwork":
                 if len(params) > 0:
                     params[0] = str(params[0])
 
