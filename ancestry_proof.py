@@ -1,4 +1,4 @@
-from zcash_mmr import Node, hash, make_parent
+from zcash_mmr import Tree, Node, hash, make_parent
 from enum import Enum
 from dataclasses import dataclass
 
@@ -71,3 +71,20 @@ class AncestryProof:
             assert self.peak_index == len(self.peaks) - 1
         
         return self.verify_root_from_peaks(root_hash, branch_id)
+    
+def path_to_root(peak: int, peak_height: int, leaf_index: int) -> list:
+    node_path = list()
+    index = peak
+    h = peak_height
+    while index > leaf_index:
+        right = Tree.right_child(index)
+        left = Tree.left_child(index, h)
+        if leaf_index > left:
+            index = right
+            node_path.append((left, NodeType.LEFT))
+        else:
+            index = left
+            node_path.append((right, NodeType.RIGHT))
+        h = h - 1
+    node_path.reverse()
+    return node_path

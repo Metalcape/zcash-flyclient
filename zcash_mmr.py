@@ -309,3 +309,15 @@ class Tree:
     
     def get(self, node_index: int) -> Node:
         return self.__nodes__[node_index]
+    
+    def get_peak_index_and_height(self, rightmost_block: int, block: int) -> tuple[int, int]:
+        peak_h: int = 0
+        peaks = self.peaks_at(rightmost_block)
+        peak_heights = self.peak_heights_at(rightmost_block)
+        assert len(peaks) == len(peak_heights)
+        leaf = self.node_index_of_block(block)
+        for (j, peak) in enumerate(peaks):
+            if leaf < peak:
+                peak_h = peak_heights[j]
+                break
+        return (j, peak_h)
