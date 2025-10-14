@@ -1,0 +1,116 @@
+from flyclient import FlyclientProof
+from zcash_client import ZcashClient, CONF_PATH
+from zcash_mmr import Tree
+
+import numpy as np
+from typing import Literal
+import json
+
+class FlyclientBenchmark(FlyclientProof):
+    _OPT_TYPE = Literal['none', 'cache', 'aggregate']
+
+    def __init__(self, client: ZcashClient, c: float = 0.5, L: int = 100, override_chain_tip: int | None = None, enable_logging = True, difficulty_aware: bool = False):
+        super(FlyclientBenchmark, self).__init__(client, c, L, override_chain_tip, enable_logging, difficulty_aware)
+
+    def get_activation_of_upgrade(self, upgrade: str) -> int:
+        for _, v in self.blockchaininfo['upgrades'].items():
+            if str(v['name']).lower() == upgrade:
+                return int(v['activationheight'])
+    
+    def generate_sample_set(self, length: int, with_difficulty : bool = True) -> list[list[int]]:
+        samples : list[list[int]] = list()
+        for _ in range(length):
+            if with_difficulty:
+                samples.append(self.sample_blocks_with_difficulty())
+            else:
+                samples.append(self.sample_blocks())
+        return samples
+
+    def calculate_proof_size(self, cache_nodes : bool) -> int:
+        nodes: dict[str, list] = dict()
+        for k in self.upgrades_needed:
+            nodes[k] = []
+
+        # Peaks at chaintip
+        nodes[self.upgrade_name] += self.peaks
+        # Ancestry paths to chaintip root
+        for k, l in self.ancestry_paths.items():
+            nodes[self.upgrade_names_of_samples[k]] += [n[0] for n in l]
+        # Peaks of previous upgrades
+        for _, d in self.extended_peaks.items():
+            for upgrade, l in d.items():
+                nodes[upgrade] += l
+        # Paths to peaks in previous upgrades
+        for _, d in self.extended_ancestry_paths.items():
+            for upgrade, l in d.items():
+                nodes[upgrade] += [n[0] for n in l]
+        # Peaks before each sampled block
+        for k, l in self.peaks_at_block.items():
+            nodes[self.upgrade_names_of_samples[k]] += l
+
+        # Count nodes, cache duplicates if requested
+        total_node_count = 0
+        for _, s in nodes.items():
+            if cache_nodes:
+                total_node_count += len(set(s))
+            else:
+                total_node_count += len(s)
+        return total_node_count
+    
+    def calculate_aggregate_proof_size(self) -> int:
+        
+        blocks : dict[str, set] = dict()
+        download_set : dict[str, set] = dict()
+
+        for u in self.upgrades_needed:
+            blocks[u] = set()
+
+        for b in self.blocks_to_sample:
+            blocks[self.upgrade_names_of_samples[b]].add(b)
+        
+        for u in self.upgrades_needed:
+            if u == self.upgrade_name:
+                mmr = Tree([], self.activation_height)
+                download_set[u] = mmr.get_min_size_proof(blocks[u], set(self.peaks))
+            else:
+                _, next_activation_height = self.next_upgrade(u)
+                mmr = Tree([], self.get_activation_of_upgrade(u))
+                download_set[u] = mmr.get_min_size_proof(blocks[u], mmr.peaks_at(next_activation_height - 1))
+
+        total_count = 0
+        for _, s in download_set.items():
+            total_count += len(s)
+        
+        return total_count
+    
+    def calculate_total_download_size_bytes(self, optimization : _OPT_TYPE = 'none') -> int:
+        # version, hashPrevBlock, merkleRoot, blockCommitments, nTime, nBits, nonce, solutionSize, solution
+        header_size = 4 + 32 + 32 + 32 + 4 + 4 + 32 + 3 + 1344
+        node_size = 244
+        # Tip height, activation height, consensus branch id, upgrade name
+        blockchaininfo_size = 4 + 4 + 8 + len(self.upgrade_name)
+        authdataroot_size = 32
+
+        match optimization:
+            case 'none':
+                total_node_count = self.calculate_proof_size(False)
+            case 'cache':
+                total_node_count = self.calculate_proof_size(True)
+            case 'aggregate':
+                total_node_count = self.calculate_aggregate_proof_size()
+            
+        return (
+            (header_size + authdataroot_size) * (len(self.blocks_to_sample) + 1)
+            + node_size * total_node_count 
+            + blockchaininfo_size
+        )
+
+if __name__ == '__main__':
+    client = ZcashClient.from_conf(CONF_PATH)
+    # client = ZcashClient("flyclient", "", 8232, "127.0.0.1")
+
+    proof = FlyclientBenchmark(client, enable_logging=False, difficulty_aware=True)
+    proof.prefetch()
+    print(f"Unoptimized: {proof.calculate_total_download_size_bytes('none')}")
+    print(f"Cache nodes: {proof.calculate_total_download_size_bytes('cache')}")
+    print(f"Aggregate: {proof.calculate_total_download_size_bytes('aggregate')}")

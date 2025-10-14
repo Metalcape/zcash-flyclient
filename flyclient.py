@@ -3,8 +3,6 @@ from zcash_mmr import *
 from sampling import *
 from ancestry_proof import path_to_root
 
-import numpy as np
-
 class FlyclientProof:
     c: float
     L: float
@@ -23,12 +21,12 @@ class FlyclientProof:
     blocks_to_sample: list[int] # list of blocks to sample
     upgrades_needed: set    # Set of upgrades needed to perform the bootstrap
     upgrade_names_of_samples: dict[int, str]    # Upgrade of each sampled block
+    
     peak_indices: dict[int, int]    # Map: sampled block -> index of its peak in the chaintip MMR
-
     ancestry_paths: dict[int, list] # Inclusion paths from the block leaf to the closest peak
-    extended_peaks: dict[int, dict] # Map: sampled block -> (Map: network upgrade -> peaks at last block)
-    extended_ancestry_paths: dict[int, dict]    # Map: sampled block -> (Map: network upgrade -> inclusion path to closest peak)
-    peaks_at_block: dict[int, int]    # Map: sampled block -> peaks at (leaf index - 1) (for chainhistoryroot verification)
+    extended_peaks: dict[int, dict[str, list]] # Map: sampled block -> (Map: network upgrade -> peaks at last block)
+    extended_ancestry_paths: dict[int, dict[str, list]] # Map: sampled block -> (Map: network upgrade -> inclusion path to closest peak)
+    peaks_at_block: dict[int, list[int]]    # Map: sampled block -> peaks at (leaf index - 1) (for chainhistoryroot verification)
 
     def __init__(self, client: ZcashClient, c: float = 0.5, L: int = 100, override_chain_tip: int | None = None, enable_logging = True, difficulty_aware: bool = False):
         self.client = client
@@ -61,19 +59,20 @@ class FlyclientProof:
             print(f"Upgrade name: {self.upgrade_name}")
             print(f"Activation height: {self.activation_height}")
     
-    def prefetch(self):
-        flyclient_activation = self.get_flyclient_activation()
+    def prefetch(self, samples: list[int] = None):
         mmr = Tree([], self.activation_height)
         
         # Get the peaks at the tip
         self.peaks = mmr.peaks_at(self.tip_height - 1)
         self.peak_heights = mmr.peak_heights_at(self.tip_height - 1)
-
+        
         # Choose random blocks, or random cumulative difficulties
-        if self.difficulty_aware:
+        if samples is not None:
+            self.blocks_to_sample = samples
+        elif self.difficulty_aware:
             self.blocks_to_sample = self.sample_blocks_with_difficulty()
         else:
-            self.blocks_to_sample = blocks_to_sample(flyclient_activation + 1, self.tip_height, self.c, self.L)
+            self.blocks_to_sample = self.sample_blocks()
         self.blocks_to_sample.sort()
 
         self.ancestry_paths = dict()
@@ -195,6 +194,9 @@ class FlyclientProof:
         for k, v in self.blockchaininfo['upgrades'].items():
             if str(v['name']).lower() == upgrade:
                 return k
+            
+    def sample_blocks(self) -> list[int]:
+        return blocks_to_sample(self.get_flyclient_activation() + 1, self.tip_height, self.c, self.L)
     
     def sample_blocks_with_difficulty(self):
         mmr = Tree([], self.activation_height)

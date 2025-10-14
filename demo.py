@@ -1,13 +1,11 @@
 from flyclient import FlyclientProof
-from zcash_client import ZcashClient
+from zcash_client import ZcashClient, CONF_PATH
 from zcash_mmr import Node, generate_block_commitments
 from sampling import *
 from ancestry_proof import AncestryNode, AncestryProof
 
 import json
 import requests
-
-CONF_PATH = "zcash.conf"
 
 class FlyclientDemo(FlyclientProof):
     leaves: dict[int, int]

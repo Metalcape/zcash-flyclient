@@ -321,3 +321,41 @@ class Tree:
                 peak_h = peak_heights[j]
                 break
         return (j, peak_h)
+    
+    def get_min_size_proof(self, block_set: set[int], peaks: list[int]) -> set:
+        download_set = set()
+        working_set : dict[int, int] = dict()
+
+        max_index = max(peaks)
+
+        for b in block_set:
+            node = self.node_index_of_block(b)
+            working_set[self.insertion_index_of_block(b)] = node
+            download_set.add(node)
+
+        for p in peaks:
+            download_set.add(p)
+
+        h = 0
+        while len(working_set) != 0:
+            new_set: dict[int, int] = dict()
+            for k, v in working_set.items():
+                # For each node: add its sibling, then merge and replace with parent
+                if v in peaks:
+                    continue
+                # if is left
+                if k % 2 == 0:
+                    sibling = self.right_sibling(v, h)
+                    parent = self.parent_from_left(v, h)
+                else:
+                    sibling = self.left_sibling(v, h)
+                    parent = self.parent_from_right(v)
+                if v not in download_set:
+                    download_set.add(sibling)
+                # Drop the parent if we reached the last peak
+                if parent < max_index:
+                    new_set[k - (k % 2 != 0)] = parent
+            working_set = new_set
+            h += 1
+        
+        return download_set
