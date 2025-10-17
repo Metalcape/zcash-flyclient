@@ -40,10 +40,6 @@ class FlyclientProof:
             print("L should be positive. Falling back to L = 100")
             L = 100
 
-        self.c = c
-        self.L = L
-        self.difficulty_aware = difficulty_aware
-
         # Get the tip and activation height
         self.blockchaininfo: dict = client.send_command("getblockchaininfo")["result"]
         if override_chain_tip is not None and override_chain_tip > self.get_flyclient_activation():
@@ -52,6 +48,10 @@ class FlyclientProof:
             self.tip_height = int(self.blockchaininfo["blocks"]) - 100
         
         (self.branch_id, self.upgrade_name, self.activation_height) = self.get_network_upgrade_of_block(self.tip_height)
+
+        self.c = c
+        self.L = L if L < 2 * (self.tip_height - self.activation_height) else (self.tip_height - self.activation_height) // 2
+        self.difficulty_aware = difficulty_aware
         
         if self.activation_height == 0:
             print("Activation height not found.")

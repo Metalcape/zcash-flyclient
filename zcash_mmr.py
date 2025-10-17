@@ -243,8 +243,23 @@ class Tree:
     
     @staticmethod
     def left_child(index: int, h: int) -> int: 
-        return index - 2**h
-
+        return index - 2**h 
+    
+    @staticmethod
+    def leftmost_leaf(index: int, h: int) -> int:
+        leaf = index
+        while h > 0:
+            leaf = Tree.left_child(leaf, h)
+            h = h - 1
+        return leaf
+    
+    @staticmethod
+    def rightmost_leaf(index: int, h: int) -> int:
+        leaf = index
+        while h > 0:
+            leaf = Tree.right_child(leaf)
+            h = h - 1
+        return leaf
 
     def insertion_index_of_block(self, height: int) -> int | None:
         diff = height - self.__activation_height__
@@ -322,40 +337,45 @@ class Tree:
                 break
         return (j, peak_h)
     
-    def get_min_size_proof(self, block_set: set[int], peaks: list[int]) -> set:
+    def get_min_size_proof(self, blocks: list | set, last_block: int) -> set[int]:
+        block_intervals = list()
         download_set = set()
-        working_set : dict[int, int] = dict()
-
-        max_index = max(peaks)
-
-        for b in block_set:
-            node = self.node_index_of_block(b)
-            working_set[self.insertion_index_of_block(b)] = node
-            download_set.add(node)
-
-        for p in peaks:
-            download_set.add(p)
-
-        h = 0
-        while len(working_set) != 0:
-            new_set: dict[int, int] = dict()
-            for k, v in working_set.items():
-                # For each node: add its sibling, then merge and replace with parent
-                if v in peaks:
-                    continue
-                # if is left
-                if k % 2 == 0:
-                    sibling = self.right_sibling(v, h)
-                    parent = self.parent_from_left(v, h)
-                else:
-                    sibling = self.left_sibling(v, h)
-                    parent = self.parent_from_right(v)
-                if v not in download_set:
-                    download_set.add(sibling)
-                # Drop the parent if we reached the last peak
-                if parent < max_index:
-                    new_set[k - (k % 2 != 0)] = parent
-            working_set = new_set
-            h += 1
         
+        block_list = list(blocks)
+        list.sort(block_list)
+
+        # Derive intervals and create sorted block list
+        current = self.__activation_height__
+        for b in block_list:
+            download_set.add(self.node_index_of_block(b))
+            block_intervals.append((current, b - 1))
+            current = b + 1
+        block_intervals.append((block_list[-1] + 1, last_block))
+
+        for interval in block_intervals:
+            # For each interval
+            x = interval[0]
+            y = interval[1]
+            while x <= y:
+                # Get the tallest parent that does not fall out of the interval
+                start = self.node_index_of_block(x)
+                end = self.node_index_of_block(y)
+                node = start
+                h = 0
+                while x % 2 == 0:
+                    parent = self.parent_from_left(node, h)
+                    rightmost_leaf = self.rightmost_leaf(parent, h+1)
+                    if rightmost_leaf > end:
+                        break
+                    node = parent
+                    h = h + 1
+                    # Add the parent and advance x past the rightmost leaf covered by the parent
+                download_set.add(node)
+                x = x + 2**h
         return download_set
+                    
+
+
+
+        
+

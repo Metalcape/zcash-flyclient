@@ -28,8 +28,13 @@ class FlyclientBenchmark(FlyclientProof):
 
     def calculate_proof_size(self, cache_nodes : bool) -> int:
         nodes: dict[str, list] = dict()
-        for k in self.upgrades_needed:
-            nodes[k] = []
+        # Populate initial list with nodes from sampled blocks
+        for u in self.upgrades_needed:
+            mmr = Tree([], self.get_activation_of_upgrade(u))
+            blocks = []
+            for k, v in self.upgrade_names_of_samples.items():
+                if v == u: blocks.append(k)
+            nodes[u] = [mmr.node_index_of_block(b) for b in blocks]
 
         # Peaks at chaintip
         nodes[self.upgrade_name] += self.peaks
@@ -50,15 +55,19 @@ class FlyclientBenchmark(FlyclientProof):
 
         # Count nodes, cache duplicates if requested
         total_node_count = 0
-        for _, s in nodes.items():
+        for _, l in nodes.items():
             if cache_nodes:
+                s = set(l)
+                if self.enable_logging:
+                    print(f"{s}, length = {len(s)}")
                 total_node_count += len(set(s))
             else:
-                total_node_count += len(s)
+                if self.enable_logging:
+                    print(f"{l}, length = {len(l)}")
+                total_node_count += len(l)
         return total_node_count
     
     def calculate_aggregate_proof_size(self) -> int:
-        
         blocks : dict[str, set] = dict()
         download_set : dict[str, set] = dict()
 
@@ -71,14 +80,16 @@ class FlyclientBenchmark(FlyclientProof):
         for u in self.upgrades_needed:
             if u == self.upgrade_name:
                 mmr = Tree([], self.activation_height)
-                download_set[u] = mmr.get_min_size_proof(blocks[u], set(self.peaks))
+                download_set[u] = mmr.get_min_size_proof(blocks[u], self.tip_height - 1)
             else:
                 _, next_activation_height = self.next_upgrade(u)
                 mmr = Tree([], self.get_activation_of_upgrade(u))
-                download_set[u] = mmr.get_min_size_proof(blocks[u], mmr.peaks_at(next_activation_height - 1))
+                download_set[u] = mmr.get_min_size_proof(blocks[u], next_activation_height - 1)
 
         total_count = 0
         for _, s in download_set.items():
+            if self.enable_logging:
+                print(f"{s}, length = {len(s)}")
             total_count += len(s)
         
         return total_count
@@ -109,6 +120,10 @@ if __name__ == '__main__':
     client = ZcashClient.from_conf(CONF_PATH)
     # client = ZcashClient("flyclient", "", 8232, "127.0.0.1")
 
+    # Example test run on small MMR
+    # proof = FlyclientBenchmark(client, enable_logging=True, difficulty_aware=True, override_chain_tip=903809)
+    # proof.prefetch([903803, 903806])
+    
     proof = FlyclientBenchmark(client, enable_logging=False, difficulty_aware=True)
     proof.prefetch()
     print(f"Unoptimized: {proof.calculate_total_download_size_bytes('none')}")
