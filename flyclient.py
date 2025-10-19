@@ -91,7 +91,12 @@ class FlyclientProof:
             mmr = Tree([], activation_height)
 
             # Get the peaks at (leaf - 1) to verify the root
-            self.peaks_at_block[block_height] = mmr.peaks_at(block_height - 1)                
+            if block_height == activation_height:
+                _, prev_activation_height = self.prev_upgrade(upgrade)
+                prev_mmr = Tree([], prev_activation_height)
+                self.peaks_at_block[block_height] = prev_mmr.peaks_at(block_height - 1)
+            else:
+                self.peaks_at_block[block_height] = mmr.peaks_at(block_height - 1)                
 
             # Compute the ancestry proof indices
             leaf_index = mmr.node_index_of_block(block_height)
@@ -154,6 +159,22 @@ class FlyclientProof:
             self.upgrades_needed.add(upgrade)
             for k in extended_path.keys():
                 self.upgrades_needed.add(k)
+    
+    def prev_upgrade(self, upgrade_name: str) -> tuple[str, int] | None:
+        for k, v in self.blockchaininfo['upgrades'].items():
+            if str(v['name']).lower() == upgrade_name:
+                keys = list(self.blockchaininfo['upgrades'].keys())
+                prev_key_index = keys.index(k) - 1
+                if prev_key_index >= 0:
+                    prev_key = keys[prev_key_index]
+                    return (
+                        str(self.blockchaininfo['upgrades'][prev_key]['name']).lower(), 
+                        self.blockchaininfo['upgrades'][prev_key]['activationheight']
+                    )
+                else:
+                    return (None, None)
+                
+        return (None, None)
     
     def next_upgrade(self, upgrade_name: str) -> tuple[str, int] | None:
         for k, v in self.blockchaininfo['upgrades'].items():
