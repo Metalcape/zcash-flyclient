@@ -2,20 +2,13 @@ from flyclient import FlyclientProof
 from zcash_client import ZcashClient, CONF_PATH
 from zcash_mmr import Tree
 
-import numpy as np
 from typing import Literal
-import json
 
 class FlyclientBenchmark(FlyclientProof):
     _OPT_TYPE = Literal['none', 'cache', 'aggregate']
 
     def __init__(self, client: ZcashClient, c: float = 0.5, L: int = 100, override_chain_tip: int | None = None, enable_logging = True, difficulty_aware: bool = False):
         super(FlyclientBenchmark, self).__init__(client, c, L, override_chain_tip, enable_logging, difficulty_aware)
-
-    def get_activation_of_upgrade(self, upgrade: str) -> int:
-        for _, v in self.blockchaininfo['upgrades'].items():
-            if str(v['name']).lower() == upgrade:
-                return int(v['activationheight'])
     
     def generate_sample_set(self, length: int, with_difficulty : bool = True) -> list[list[int]]:
         samples : list[list[int]] = list()
@@ -25,6 +18,19 @@ class FlyclientBenchmark(FlyclientProof):
             else:
                 samples.append(self.sample_blocks())
         return samples
+    
+    def prefetch_fake_chain(self, chain_length: int, upgrades: list[tuple[str, int]], samples: list[int]):
+        upgrades_dict = dict()
+        for i, (u, h) in enumerate(upgrades):
+            upgrades_dict[i] = {"name": u, "activationheight": h, "status": "active"}
+        self.blockchaininfo['upgrades'] = upgrades_dict
+        self.blockchaininfo['blocks'] = chain_length
+        self.blockchaininfo['headers'] = chain_length
+        self.upgrade_name = upgrades[-1][0]
+        self.activation_height = upgrades[-1][1]
+        self.tip_height = chain_length
+        self.is_fake = True
+        self.prefetch(samples)
 
     def calculate_proof_size(self, cache_nodes : bool) -> int:
         nodes: dict[str, list] = dict()
@@ -42,9 +48,8 @@ class FlyclientBenchmark(FlyclientProof):
         for k, l in self.ancestry_paths.items():
             nodes[self.upgrade_names_of_samples[k]] += [n[0] for n in l]
         # Peaks of previous upgrades
-        for _, d in self.extended_peaks.items():
-            for upgrade, l in d.items():
-                nodes[upgrade] += l
+        for upgrade, l in self.prev_peaks.items():
+            nodes[upgrade] += l
         # Paths to peaks in previous upgrades
         for _, d in self.extended_ancestry_paths.items():
             for upgrade, l in d.items():
@@ -55,15 +60,15 @@ class FlyclientBenchmark(FlyclientProof):
 
         # Count nodes, cache duplicates if requested
         total_node_count = 0
-        for _, l in nodes.items():
+        for name, l in nodes.items():
             if cache_nodes:
                 s = set(l)
                 if self.enable_logging:
-                    print(f"{s}, length = {len(s)}")
+                    print(f"{name}: {s}, length = {len(s)}")
                 total_node_count += len(set(s))
             else:
                 if self.enable_logging:
-                    print(f"{l}, length = {len(l)}")
+                    print(f"{name}: {l}, length = {len(l)}")
                 total_node_count += len(l)
         return total_node_count
     
@@ -87,9 +92,9 @@ class FlyclientBenchmark(FlyclientProof):
                 download_set[u] = mmr.get_min_size_proof(blocks[u], next_activation_height - 1)
 
         total_count = 0
-        for _, s in download_set.items():
+        for name, s in download_set.items():
             if self.enable_logging:
-                print(f"{s}, length = {len(s)}")
+                print(f"{name}: {s}, length = {len(s)}")
             total_count += len(s)
         
         return total_count
@@ -101,6 +106,9 @@ class FlyclientBenchmark(FlyclientProof):
         # Tip height, activation height, consensus branch id, upgrade name
         blockchaininfo_size = 4 + 4 + 8 + len(self.upgrade_name)
         authdataroot_size = 32
+
+        if self.enable_logging:
+            print(f"Blocks: {self.blocks_to_sample}, length = {len(self.blocks_to_sample)}")
 
         match optimization:
             case 'none':
@@ -124,8 +132,9 @@ if __name__ == '__main__':
     # proof = FlyclientBenchmark(client, enable_logging=True, difficulty_aware=True, override_chain_tip=903809)
     # proof.prefetch([903803, 903806])
     
-    proof = FlyclientBenchmark(client, enable_logging=False, difficulty_aware=True)
-    proof.prefetch()
+    proof = FlyclientBenchmark(client, enable_logging=True, difficulty_aware=True)
+    # proof.prefetch()
+    proof.prefetch_fake_chain(15, [('nu1', 0), ('nu2', 6)], [3, 5, 9])
     print(f"Unoptimized: {proof.calculate_total_download_size_bytes('none')}")
     print(f"Cache nodes: {proof.calculate_total_download_size_bytes('cache')}")
     print(f"Aggregate: {proof.calculate_total_download_size_bytes('aggregate')}")

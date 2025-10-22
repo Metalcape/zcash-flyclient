@@ -9,6 +9,9 @@ class FlyclientProof:
     c: float
     L: float
     difficulty_aware: bool
+    min_difficulty: int
+    max_difficulty: int
+    total_difficulty: int
 
     client: ZcashClient
     enable_logging: bool
@@ -25,10 +28,13 @@ class FlyclientProof:
     upgrade_names_of_samples: dict[int, str]    # Upgrade of each sampled block
     
     peak_indices: dict[int, int]    # Map: sampled block -> index of its peak in the chaintip MMR
-    ancestry_paths: dict[int, list] # Inclusion paths from the block leaf to the closest peak
-    extended_peaks: dict[int, dict[str, list]] # Map: sampled block -> (Map: network upgrade -> peaks at last block)
+    ancestry_paths: dict[int, list] # Inclusion paths from the block leaf to the closest peak (at the latest upgrade)
+    prev_peaks: dict[str, list[int]]    # Map: network upgrade -> peaks at last block
     extended_ancestry_paths: dict[int, dict[str, list]] # Map: sampled block -> (Map: network upgrade -> inclusion path to closest peak)
     peaks_at_block: dict[int, list[int]]    # Map: sampled block -> peaks at (leaf index - 1) (for chainhistoryroot verification)
+
+    # Fake test chain
+    is_fake: bool = False
 
     def __init__(self, client: ZcashClient, c: float = 0.5, L: int = 100, override_chain_tip: int | None = None, enable_logging = True, difficulty_aware: bool = False):
         self.client = client
@@ -56,6 +62,12 @@ class FlyclientProof:
         max_L = math.trunc(self.c * (self.tip_height - flyclient_activation))
         self.L = L if L < max_L else max_L
         self.difficulty_aware = difficulty_aware
+
+        if self.difficulty_aware:
+            mmr = Tree([], self.activation_height)
+            self.min_difficulty = int.from_bytes(bytes.fromhex(self.client.download_extra_data("gettotalwork", self.get_flyclient_activation() + 1)["total_work"]), byteorder='big')
+            self.max_difficulty = int.from_bytes(bytes.fromhex(self.client.download_node(self.upgrade_name, mmr.insertion_index_of_block(self.tip_height), True)["subtree_total_work"]), byteorder='big')
+            self.total_difficulty = int.from_bytes(bytes.fromhex(self.client.download_extra_data("gettotalwork", self.tip_height)["total_work"]), byteorder='big')
         
         if self.activation_height == 0:
             print("Activation height not found.")
@@ -77,13 +89,13 @@ class FlyclientProof:
             self.blocks_to_sample = self.sample_blocks_with_difficulty()
         else:
             self.blocks_to_sample = self.sample_blocks()
+        self.blocks_to_sample += self.get_activation_blocks()
         self.blocks_to_sample.sort()
 
         self.ancestry_paths = dict()
         self.peak_indices = dict()
         self.inclusion_paths = dict()
         self.extended_ancestry_paths = dict()
-        self.extended_peaks = dict()
         self.upgrade_names_of_samples = dict()
         self.upgrades_needed = set()
         self.peaks_at_block = dict()
@@ -129,7 +141,6 @@ class FlyclientProof:
             # Check if the ancestry path belongs to the latest upgrade. If not, we must keep
             # climbing the MMR tree(s) until we get to the chaintip root.
             extended_path = dict()
-            extended_peaks = dict()
             current_upgrade = upgrade
             current_activation_height = activation_height
             while current_upgrade != self.upgrade_name:
@@ -150,7 +161,6 @@ class FlyclientProof:
 
                 # Get the path to the root (the peak is always the first one)
                 extended_path[current_upgrade] = path
-                extended_peaks[current_upgrade] = peaks
                 
                 # Go up one network upgrade
                 (current_upgrade, current_activation_height) = self.next_upgrade(current_upgrade)
@@ -158,13 +168,20 @@ class FlyclientProof:
             self.peak_indices[block_height] = peak_index
             self.ancestry_paths[block_height] = ancestry_path
             self.extended_ancestry_paths[block_height] = extended_path
-            self.extended_peaks[block_height] = extended_peaks
             self.upgrade_names_of_samples[block_height] = upgrade
             self.upgrades_needed.add(upgrade)
             self.upgrades_needed.add(self.upgrade_name)
             for k in extended_path.keys():
                 self.upgrades_needed.add(k)
-    
+        
+        # Save previous peaks for each upgrade needed
+        self.prev_peaks = dict()
+        for u in self.upgrades_needed.difference(set([self.upgrade_name])):
+            activation = self.get_activation_of_upgrade(u)
+            _, next_activation = self.next_upgrade(u)
+            mmr = Tree([], activation)
+            self.prev_peaks[u] = mmr.peaks_at(next_activation - 1)
+
     def prev_upgrade(self, upgrade_name: str) -> tuple[str, int] | None:
         for k, v in self.blockchaininfo['upgrades'].items():
             if str(v['name']).lower() == upgrade_name:
@@ -200,7 +217,7 @@ class FlyclientProof:
     def get_network_upgrade_of_block(self, height) -> tuple[str, str, int]:
         branch_id = next(iter(self.blockchaininfo['upgrades']))
         for k, v in self.blockchaininfo['upgrades'].items():
-            if v['activationheight'] > height:
+            if v['activationheight'] >= height:
                 break
             else:
                 branch_id = k
@@ -212,6 +229,8 @@ class FlyclientProof:
         )
     
     def get_flyclient_activation(self) -> int:
+        if self.is_fake:
+            return 0
         for _, v in self.blockchaininfo['upgrades'].items():
             if str(v['name']).lower() == "heartwood":
                 return int(v['activationheight'])
@@ -220,7 +239,24 @@ class FlyclientProof:
         for k, v in self.blockchaininfo['upgrades'].items():
             if str(v['name']).lower() == upgrade:
                 return k
+    
+    def get_activation_of_upgrade(self, upgrade: str) -> int:
+        for _, v in self.blockchaininfo['upgrades'].items():
+            if str(v['name']).lower() == upgrade:
+                return int(v['activationheight'])
             
+    def get_activation_blocks(self) -> list[int]:
+        flyclient_activation = self.get_flyclient_activation()
+        blocks = list()
+        for _, v in self.blockchaininfo['upgrades'].items():
+            activation = v['activationheight']
+            if activation <= flyclient_activation:
+                continue
+            if activation >= self.tip_height:
+                break
+            blocks.append(activation)
+        return blocks
+    
     def sample_blocks(self) -> list[int]:
         return blocks_to_sample(self.get_flyclient_activation() + 1, self.tip_height, self.c, self.L)
     
@@ -260,18 +296,12 @@ class FlyclientProof:
         
         return end
     
-    def sample_blocks_with_difficulty(self, difficulty_map: dict[int, int] | None = None):
-        mmr = Tree([], self.activation_height)
-        
-        min_difficulty = int.from_bytes(bytes.fromhex(self.client.download_extra_data("gettotalwork", self.get_flyclient_activation() + 1)["total_work"]), byteorder='big')
-        max_difficulty = int.from_bytes(bytes.fromhex(self.client.download_node(self.upgrade_name, mmr.insertion_index_of_block(self.tip_height), True)["subtree_total_work"]), byteorder='big')
-        total_difficulty = int.from_bytes(bytes.fromhex(self.client.download_extra_data("gettotalwork", self.tip_height)["total_work"]), byteorder='big')
-        
+    def sample_blocks_with_difficulty(self, difficulty_map: dict[int, int] | None = None):     
         # Estimate the dificulty-aware L as L * total work of last block
-        max_L = math.trunc(self.c * (total_difficulty - 1))
-        diff_L = self.L * max_difficulty
+        max_L = math.trunc(self.c * (self.total_difficulty - 1))
+        diff_L = self.L * self.max_difficulty
         diff_L = min(max_L, diff_L)
-        difficulty_samples = difficulty_to_sample(min_difficulty, total_difficulty, self.c, diff_L)
+        difficulty_samples = difficulty_to_sample(self.min_difficulty, self.total_difficulty, self.c, diff_L)
 
         deterministic = [i for i in range(self.tip_height - self.L, self.tip_height)]
         random = set()

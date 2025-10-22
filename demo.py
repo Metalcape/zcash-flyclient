@@ -185,7 +185,7 @@ class FlyclientDemo(FlyclientProof):
 
             # Handle extended path if needed
             extra_paths = self.extended_ancestry_paths[block_height]
-            extra_peaks = self.extended_peaks[block_height]
+            extra_peaks = self.prev_peaks[self.upgrade_names_of_samples[block_height]]
             while current_upgrade != self.upgrade_name:
                 (_, next_activation_height) = self.next_upgrade(current_upgrade)
                 root_header = self.download_header(next_activation_height)
