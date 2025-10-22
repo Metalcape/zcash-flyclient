@@ -3,6 +3,8 @@ from zcash_mmr import *
 from sampling import *
 from ancestry_proof import path_to_root
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 class FlyclientProof:
     c: float
     L: float
@@ -42,7 +44,8 @@ class FlyclientProof:
 
         # Get the tip and activation height
         self.blockchaininfo: dict = client.send_command("getblockchaininfo")["result"]
-        if override_chain_tip is not None and override_chain_tip > self.get_flyclient_activation():
+        flyclient_activation = self.get_flyclient_activation()
+        if override_chain_tip is not None and override_chain_tip > flyclient_activation:
             self.tip_height = int(override_chain_tip)
         else:
             self.tip_height = int(self.blockchaininfo["blocks"]) - 100
@@ -50,7 +53,8 @@ class FlyclientProof:
         (self.branch_id, self.upgrade_name, self.activation_height) = self.get_network_upgrade_of_block(self.tip_height)
 
         self.c = c
-        self.L = L if L < 2 * (self.tip_height - self.activation_height) else (self.tip_height - self.activation_height) // 2
+        max_L = math.trunc(self.c * (self.tip_height - flyclient_activation))
+        self.L = L if L < max_L else max_L
         self.difficulty_aware = difficulty_aware
         
         if self.activation_height == 0:
@@ -157,6 +161,7 @@ class FlyclientProof:
             self.extended_peaks[block_height] = extended_peaks
             self.upgrade_names_of_samples[block_height] = upgrade
             self.upgrades_needed.add(upgrade)
+            self.upgrades_needed.add(self.upgrade_name)
             for k in extended_path.keys():
                 self.upgrades_needed.add(k)
     
@@ -219,7 +224,43 @@ class FlyclientProof:
     def sample_blocks(self) -> list[int]:
         return blocks_to_sample(self.get_flyclient_activation() + 1, self.tip_height, self.c, self.L)
     
-    def sample_blocks_with_difficulty(self):
+    def build_difficulty_map(self) -> dict[int, int]:
+        difficulty_map: dict[int, int] = dict()
+        heights = range(self.get_flyclient_activation() + 1, self.tip_height)
+
+        def fetch_difficulty(height):
+            difficulty = int.from_bytes(
+                bytes.fromhex(self.client.download_extra_data("gettotalwork", height)["total_work"]), 
+                byteorder='big'
+            )
+            return height, difficulty
+
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            # Submit all tasks
+            futures = [executor.submit(fetch_difficulty, i) for i in heights]
+            
+            # Wait for all to complete and collect results
+            for future in as_completed(futures):
+                height, difficulty = future.result()
+                difficulty_map[height] = difficulty
+        
+        return difficulty_map
+
+    @staticmethod
+    def get_first_block_with_total_work(difficulty_map: dict[int, int], total_work: int) -> int:
+        start = min(difficulty_map.keys())
+        end = max(difficulty_map.keys())
+
+        while start != end:
+            middle = (start + end) // 2
+            if difficulty_map[middle] >= total_work:
+                end = middle
+            else:
+                start = middle + 1
+        
+        return end
+    
+    def sample_blocks_with_difficulty(self, difficulty_map: dict[int, int] | None = None):
         mmr = Tree([], self.activation_height)
         
         min_difficulty = int.from_bytes(bytes.fromhex(self.client.download_extra_data("gettotalwork", self.get_flyclient_activation() + 1)["total_work"]), byteorder='big')
@@ -227,12 +268,19 @@ class FlyclientProof:
         total_difficulty = int.from_bytes(bytes.fromhex(self.client.download_extra_data("gettotalwork", self.tip_height)["total_work"]), byteorder='big')
         
         # Estimate the dificulty-aware L as L * total work of last block
-        difficulty_samples = difficulty_to_sample(min_difficulty, total_difficulty, self.c, self.L * max_difficulty)
+        max_L = math.trunc(self.c * (total_difficulty - 1))
+        diff_L = self.L * max_difficulty
+        diff_L = min(max_L, diff_L)
+        difficulty_samples = difficulty_to_sample(min_difficulty, total_difficulty, self.c, diff_L)
 
         deterministic = [i for i in range(self.tip_height - self.L, self.tip_height)]
         random = set()
         for d in difficulty_samples:
-            block_index = self.client.download_extra_data("getfirstblockwithtotalwork", d.to_bytes(32, byteorder='big').hex())
-            random.add(block_index["height"])
+            if difficulty_map is not None:
+                block_index = FlyclientProof.get_first_block_with_total_work(difficulty_map, d)
+                random.add(block_index)
+            else:
+                block_index = self.client.download_extra_data("getfirstblockwithtotalwork", d.to_bytes(32, byteorder='big').hex())
+                random.add(block_index['height'])
         
         return list(random) + deterministic

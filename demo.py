@@ -106,7 +106,7 @@ class FlyclientDemo(FlyclientProof):
             print("Chaintip header:")
             print(json.dumps(chaintip_header, indent=1))
         if self.verify_header(chaintip_header) is False:
-            print(f"Fatal: header verification failed for chaintip block {block_height}")
+            print(f"Fatal: header verification failed for chaintip block {self.tip_height}")
             return False
         
         for block_height in self.blocks_to_sample:
@@ -140,7 +140,7 @@ class FlyclientDemo(FlyclientProof):
                     print(json.dumps(root_header, indent=1))
                 
                 if self.verify_header(root_header) is False:
-                    print("Fatal: root node header verification failed")
+                    print("Fatal: root node header verification failed at last header of upgrade")
                     return False
 
             # Download the leaf, and verify that it corresponds to the header using the hash field
@@ -192,7 +192,7 @@ class FlyclientDemo(FlyclientProof):
                 if root_header is None: return False
 
                 if self.verify_header(root_header) is False:
-                    print("Fatal: root node header verification failed")
+                    print("Fatal: root node header verification failed in a future upgrade")
                     return False
 
                 # If we are in the first network upgrade, get the leaf before the block
@@ -238,6 +238,6 @@ if __name__ == "__main__":
     client = ZcashClient.from_conf(CONF_PATH)
     # client = ZcashClient("flyclient", "", 8232, "127.0.0.1")
     
-    proof = FlyclientDemo(client, difficulty_aware=True)
+    proof = FlyclientDemo(client, difficulty_aware=True, enable_logging=False)
     if proof.download_and_verify() is True:
         print("Success!")
