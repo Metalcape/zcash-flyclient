@@ -215,7 +215,6 @@ class Tree:
     __nodes__: list[Node]
     __activation_height__: int
 
-    @classmethod
     def __init__(self, nodes: list[Node], activation_height: int):
         self.__nodes__ = nodes
         self.__activation_height__ = activation_height
