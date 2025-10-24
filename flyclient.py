@@ -27,7 +27,7 @@ class FlyclientProof:
     upgrades_needed: set    # Set of upgrades needed to perform the bootstrap
     upgrade_names_of_samples: dict[int, str]    # Upgrade of each sampled block
     
-    peak_indices: dict[int, int]    # Map: sampled block -> index of its peak in the chaintip MMR
+    peak_indices: dict[int, int]    # Map: sampled block -> index of its peak in its upgrade MMR
     ancestry_paths: dict[int, list] # Inclusion paths from the block leaf to the closest peak (at the latest upgrade)
     prev_peaks: dict[str, list[int]]    # Map: network upgrade -> peaks at last block
     extended_ancestry_paths: dict[int, dict[str, list]] # Map: sampled block -> (Map: network upgrade -> inclusion path to closest peak)
@@ -217,7 +217,10 @@ class FlyclientProof:
     def get_network_upgrade_of_block(self, height) -> tuple[str, str, int]:
         branch_id = next(iter(self.blockchaininfo['upgrades']))
         for k, v in self.blockchaininfo['upgrades'].items():
-            if v['activationheight'] >= height:
+            if v['activationheight'] > height:
+                break
+            elif v['activationheight'] == height:
+                branch_id = k
                 break
             else:
                 branch_id = k
@@ -296,7 +299,9 @@ class FlyclientProof:
         
         return end
     
-    def sample_blocks_with_difficulty(self, difficulty_map: dict[int, int] | None = None):     
+    difficulty_cache: dict[int, int] = dict()
+
+    def sample_blocks_with_difficulty(self):     
         # Estimate the dificulty-aware L as L * total work of last block
         max_L = math.trunc(self.c * (self.total_difficulty - 1))
         diff_L = self.L * self.max_difficulty
@@ -306,11 +311,11 @@ class FlyclientProof:
         deterministic = [i for i in range(self.tip_height - self.L, self.tip_height)]
         random = set()
         for d in difficulty_samples:
-            if difficulty_map is not None:
-                block_index = FlyclientProof.get_first_block_with_total_work(difficulty_map, d)
-                random.add(block_index)
+            if d in self.difficulty_cache.keys():
+                random.add(self.difficulty_cache[d])
             else:
                 block_index = self.client.download_extra_data("getfirstblockwithtotalwork", d.to_bytes(32, byteorder='big').hex())
+                self.difficulty_cache[d] = block_index['height']
                 random.add(block_index['height'])
         
         return list(random) + deterministic
