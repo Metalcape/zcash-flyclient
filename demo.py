@@ -100,8 +100,7 @@ class FlyclientDemo(FlyclientProof):
         # Download and verify tip header
         chaintip_header = self.download_header(self.tip_height)
         if chaintip_header is None: return False
-        chaintip_peak_nodes = self.download_peaks(self.upgrade_name, self.peaks)
-        if chaintip_peak_nodes is None: return False
+
         if self.enable_logging:
             print("Chaintip header:")
             print(json.dumps(chaintip_header, indent=1))
@@ -125,6 +124,7 @@ class FlyclientDemo(FlyclientProof):
             
             current_upgrade = self.upgrade_names_of_samples[block_height]
             current_branch_id = self.get_branch_id_of_upgrade(current_upgrade)
+            peak_nodes = self.download_peaks(current_upgrade, self.peaks[current_upgrade])
             
             # Use the tip header if at most recent upgrade
             # Otherwise, download the last header for the current upgrade
@@ -155,80 +155,32 @@ class FlyclientDemo(FlyclientProof):
                 return False
             
             # Download peaks at sampled block - 1
-            peak_nodes_at_sample = self.download_peaks(current_upgrade, self.peaks_at_block[block_height])
+            activation_height = self.get_activation_of_upgrade(current_upgrade)
+            if block_height == activation_height:
+                prev_upgrade, _ = self.prev_upgrade(current_upgrade)
+                branch_id = self.get_branch_id_of_upgrade(prev_upgrade)
+                peak_nodes_at_sample = self.download_peaks(prev_upgrade, self.peaks_at_block[block_height])
+            else:
+                branch_id = current_branch_id
+                peak_nodes_at_sample = self.download_peaks(current_upgrade, self.peaks_at_block[block_height])
             if peak_nodes_at_sample is None: return False
 
             # Check chain history root for sampled header
             sample_proof = AncestryProof(None, peak_nodes_at_sample, None, None)
-            if not sample_proof.verify_root_from_peaks(header["chainhistoryroot"], current_branch_id):
+            if not sample_proof.verify_root_from_peaks(header["chainhistoryroot"], branch_id):
                 print(f"Fatal: sample chainhistoryroot verification failed for block at height {block_height}")
                 return False
 
             # Download MMR nodes for ancestry proof
-            siblings = self.download_ancestry_proof(self.upgrade_name, self.ancestry_paths[block_height])
+            siblings = self.download_ancestry_proof(self.upgrade_names_of_samples[block_height], self.ancestry_paths[block_height])
             if siblings is None: return False
 
-            # Download leftmost leaf if not at latest upgrade
-            if current_upgrade != self.upgrade_name:
-                try:
-                    leaf_node = Node.from_dict(self.client.download_node(self.upgrade_name, 0, True))
-                except requests.exceptions.RequestException as e:
-                    print(f"Response error when downloading rightmost leaf node: {e.response}")
-                    return False
-
             # Recompute chain history root from node chain and peaks
-            peak_index = self.peak_indices[block_height] if current_upgrade == self.upgrade_name else 0
-            ancestry_proof = AncestryProof(leaf_node, chaintip_peak_nodes, siblings, peak_index)
-            if not ancestry_proof.verify_chain_history_root(chaintip_header["chainhistoryroot"], self.branch_id):
+            peak_index = self.peak_indices[block_height]
+            ancestry_proof = AncestryProof(leaf_node, peak_nodes, siblings, peak_index)
+            if not ancestry_proof.verify_chain_history_root(root_header["chainhistoryroot"], current_branch_id):
                 print(f"Fatal: tip chainhistoryroot verification failed for block at height {block_height}")
                 return False
-
-            # Handle extended path if needed
-            extra_paths = self.extended_ancestry_paths[block_height]
-            extra_peaks = self.prev_peaks[self.upgrade_names_of_samples[block_height]]
-            while current_upgrade != self.upgrade_name:
-                (_, next_activation_height) = self.next_upgrade(current_upgrade)
-                root_header = self.download_header(next_activation_height)
-                if root_header is None: return False
-
-                if self.verify_header(root_header) is False:
-                    print("Fatal: root node header verification failed in a future upgrade")
-                    return False
-
-                # If we are in the first network upgrade, get the leaf before the block
-                # Otherwise, get the leftmost leaf
-                if current_upgrade == self.upgrade_names_of_samples[block_height]:
-                    leaf_index = self.leaves[block_height]
-                    peak_index = self.peak_indices[block_height]
-                else:
-                    leaf_index = 0
-                    peak_index = 0
-                try:
-                    leaf_node = Node.from_dict(self.client.download_node(current_upgrade, leaf_index, True))
-                except requests.exceptions.RequestException as e:
-                    print(f"Response error when downloading leftmost leaf node for upgrade {current_upgrade}: {e.response}")
-                    return False
-                
-                # Download MMR nodes for extended ancestry proof
-                siblings = self.download_ancestry_proof(current_upgrade, extra_paths[current_upgrade])
-                if siblings is None: return False
-
-                # Download peaks
-                if current_upgrade == self.upgrade_name:
-                    peak_nodes = self.download_peaks(current_upgrade, self.peaks)
-                else:
-                    peak_nodes = self.download_peaks(current_upgrade, extra_peaks[current_upgrade])
-                if peak_nodes is None: return False
-
-                # Ancestry proof from activation block to upgrade root
-                ancestry_proof = AncestryProof(leaf_node, peak_nodes, siblings, peak_index)
-                if not ancestry_proof.verify_chain_history_root(root_header["chainhistoryroot"], current_branch_id):
-                    print(f"Fatal: extended chainhistoryroot verification failed for block at height {block_height} at upgrade {current_upgrade}")
-                    return False
-                
-                # Go to next network upgrade
-                (current_upgrade, _) = self.next_upgrade(current_upgrade)
-                current_branch_id = self.get_branch_id_of_upgrade(current_upgrade)
 
             print(f"Verified block {block_height}")
 

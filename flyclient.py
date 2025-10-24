@@ -21,16 +21,13 @@ class FlyclientProof:
     activation_height: int
     upgrade_name: str
 
-    peaks: list[int]    # Peaks at chaintip - 1
-    peak_heights: list[int] # Heights of peaks at chaintip - 1
+    peaks: dict[str, list[int]]    # Map: network upgrade -> peaks at last block
     blocks_to_sample: list[int] # list of blocks to sample
     upgrades_needed: set    # Set of upgrades needed to perform the bootstrap
     upgrade_names_of_samples: dict[int, str]    # Upgrade of each sampled block
     
     peak_indices: dict[int, int]    # Map: sampled block -> index of its peak in its upgrade MMR
-    ancestry_paths: dict[int, list] # Inclusion paths from the block leaf to the closest peak (at the latest upgrade)
-    prev_peaks: dict[str, list[int]]    # Map: network upgrade -> peaks at last block
-    extended_ancestry_paths: dict[int, dict[str, list]] # Map: sampled block -> (Map: network upgrade -> inclusion path to closest peak)
+    ancestry_paths: dict[int, list] # Inclusion paths from the block leaf to the closest peak in its MMR
     peaks_at_block: dict[int, list[int]]    # Map: sampled block -> peaks at (leaf index - 1) (for chainhistoryroot verification)
 
     # Fake test chain
@@ -79,8 +76,8 @@ class FlyclientProof:
         mmr = Tree([], self.activation_height)
         
         # Get the peaks at the tip
-        self.peaks = mmr.peaks_at(self.tip_height - 1)
-        self.peak_heights = mmr.peak_heights_at(self.tip_height - 1)
+        self.peaks = dict()
+        self.peaks[self.upgrade_name] = mmr.peaks_at(self.tip_height - 1)
         
         # Choose random blocks, or random cumulative difficulties
         if samples is not None:
@@ -89,21 +86,22 @@ class FlyclientProof:
             self.blocks_to_sample = self.sample_blocks_with_difficulty()
         else:
             self.blocks_to_sample = self.sample_blocks()
-        self.blocks_to_sample += self.get_activation_blocks()
+        self.blocks_to_sample += self.get_activation_blocks(self.blocks_to_sample[0])
         self.blocks_to_sample.sort()
 
         self.ancestry_paths = dict()
         self.peak_indices = dict()
-        self.inclusion_paths = dict()
-        self.extended_ancestry_paths = dict()
         self.upgrade_names_of_samples = dict()
         self.upgrades_needed = set()
         self.peaks_at_block = dict()
+        self.prev_peaks = dict()
         self.leaves = dict()
+
+        self.upgrades_needed.add(self.upgrade_name)
+
         for block_height in self.blocks_to_sample:
 
             (_, upgrade, activation_height) = self.get_network_upgrade_of_block(block_height)
-            
             mmr = Tree([], activation_height)
 
             # Get the peaks at (leaf - 1) to verify the root
@@ -125,62 +123,23 @@ class FlyclientProof:
                 (_, next_activation_height) = self.next_upgrade(upgrade)
                 last_block = next_activation_height - 1
             
+            # Save the upgrade peaks if we have not yet done so
+            if upgrade not in self.peaks.keys():
+                self.peaks[upgrade] = mmr.peaks_at(last_block)
+            
             (peak_index, peak_h) = mmr.get_peak_index_and_height(last_block, block_height)
             if self.enable_logging: 
                 print(f"Peak index for block {block_height}: {peak_index}")
                 print(f"Node count at block {block_height}: {mmr.node_count_at(block_height)}")
 
-            # Calculate the path to the chain tip root
-            # the leaf is either the leftmost one (before current upgrade) or the one at the sampled block
-            if upgrade == self.upgrade_name:
-                ancestry_path = path_to_root(self.peaks[peak_index], peak_h, leaf_index)
-            else:
-                ancestry_path = path_to_root(self.peaks[0], self.peak_heights[0], 0)
+            # Calculate the path to the MMR root
+            ancestry_path = path_to_root(self.peaks[upgrade][peak_index], peak_h, leaf_index)
             if self.enable_logging: print(f"Siblings for block header {block_height}: {ancestry_path}")
-
-            # Check if the ancestry path belongs to the latest upgrade. If not, we must keep
-            # climbing the MMR tree(s) until we get to the chaintip root.
-            extended_path = dict()
-            current_upgrade = upgrade
-            current_activation_height = activation_height
-            while current_upgrade != self.upgrade_name:
-                mmr = Tree([], current_activation_height)
-
-                # Get the last block covered by the network upgrade
-                (_, next_activation_height) = self.next_upgrade(current_upgrade)
-                last_block = next_activation_height - 1
-
-                # Get peak set, with index and height of the first leaf
-                peaks = mmr.peaks_at(last_block)
-                peak_heights = mmr.peak_heights_at(last_block)
-                
-                if current_upgrade == upgrade:
-                    path = path_to_root(peaks[peak_index], peak_h, leaf_index)
-                else:
-                    path = path_to_root(peaks[0], peak_heights[0], 0)
-
-                # Get the path to the root (the peak is always the first one)
-                extended_path[current_upgrade] = path
-                
-                # Go up one network upgrade
-                (current_upgrade, current_activation_height) = self.next_upgrade(current_upgrade)
 
             self.peak_indices[block_height] = peak_index
             self.ancestry_paths[block_height] = ancestry_path
-            self.extended_ancestry_paths[block_height] = extended_path
             self.upgrade_names_of_samples[block_height] = upgrade
             self.upgrades_needed.add(upgrade)
-            self.upgrades_needed.add(self.upgrade_name)
-            for k in extended_path.keys():
-                self.upgrades_needed.add(k)
-        
-        # Save previous peaks for each upgrade needed
-        self.prev_peaks = dict()
-        for u in self.upgrades_needed.difference(set([self.upgrade_name])):
-            activation = self.get_activation_of_upgrade(u)
-            _, next_activation = self.next_upgrade(u)
-            mmr = Tree([], activation)
-            self.prev_peaks[u] = mmr.peaks_at(next_activation - 1)
 
     def prev_upgrade(self, upgrade_name: str) -> tuple[str, int] | None:
         for k, v in self.blockchaininfo['upgrades'].items():
@@ -248,12 +207,13 @@ class FlyclientProof:
             if str(v['name']).lower() == upgrade:
                 return int(v['activationheight'])
             
-    def get_activation_blocks(self) -> list[int]:
-        flyclient_activation = self.get_flyclient_activation()
+    def get_activation_blocks(self, first_sampled_block: int) -> list[int]:
+        _, first_upgrade, _ = self.get_network_upgrade_of_block(first_sampled_block)
+        _, second_activation = self.next_upgrade(first_upgrade)
         blocks = list()
         for _, v in self.blockchaininfo['upgrades'].items():
             activation = v['activationheight']
-            if activation <= flyclient_activation:
+            if activation < second_activation:
                 continue
             if activation >= self.tip_height:
                 break
