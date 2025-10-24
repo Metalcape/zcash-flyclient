@@ -35,28 +35,20 @@ class FlyclientBenchmark(FlyclientProof):
     def calculate_proof_size(self, cache_nodes : bool) -> int:
         nodes: dict[str, list] = dict()
         # Populate initial list with nodes from sampled blocks
+        mmrs : dict[str, Tree] = dict()
         for u in self.upgrades_needed:
-            mmr = Tree([], self.get_activation_of_upgrade(u))
-            blocks = []
-            for k, v in self.upgrade_names_of_samples.items():
-                if v == u: blocks.append(k)
-            nodes[u] = [mmr.node_index_of_block(b) for b in blocks]
-
-        # Peaks at chaintip
-        nodes[self.upgrade_name] += self.peaks
-        # Ancestry paths to chaintip root
-        for k, l in self.ancestry_paths.items():
-            nodes[self.upgrade_names_of_samples[k]] += [n[0] for n in l]
-        # Peaks of previous upgrades
-        for upgrade, l in self.prev_peaks.items():
-            nodes[upgrade] += l
-        # Paths to peaks in previous upgrades
-        for _, d in self.extended_ancestry_paths.items():
-            for upgrade, l in d.items():
-                nodes[upgrade] += [n[0] for n in l]
-        # Peaks before each sampled block
-        for k, l in self.peaks_at_block.items():
-            nodes[self.upgrade_names_of_samples[k]] += l
+            nodes[u] = list()
+            mmrs[u] = Tree([], self.get_activation_of_upgrade(u))
+        for b in self.blocks_to_sample:
+            upgrade = self.upgrade_names_of_samples[b]
+            # Block leaf
+            nodes[upgrade].append(mmrs[upgrade].node_index_of_block(b))
+            # Ancestry paths to MMR root
+            nodes[upgrade] += [n[0] for n in self.ancestry_paths[b]]
+            # Other peaks outside ancestry path
+            for i in range(len(self.peaks[upgrade])):
+                if i != self.peak_indices[b]:
+                    nodes[upgrade].append(self.peaks[upgrade][i])
 
         # Count nodes, cache duplicates if requested
         total_node_count = 0
