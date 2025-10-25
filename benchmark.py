@@ -1,8 +1,9 @@
 from flyclient import FlyclientProof
 from zcash_client import ZcashClient, CONF_PATH
 from zcash_mmr import Tree
-
 from typing import Literal
+
+import asyncio
 
 class FlyclientBenchmark(FlyclientProof):
     _OPT_TYPE = Literal['none', 'cache', 'aggregate']
@@ -19,7 +20,7 @@ class FlyclientBenchmark(FlyclientProof):
                 samples.append(self.sample_blocks())
         return samples
     
-    def prefetch_fake_chain(self, chain_length: int, upgrades: list[tuple[str, int]], samples: list[int]):
+    async def prefetch_fake_chain(self, chain_length: int, upgrades: list[tuple[str, int]], samples: list[int]):
         upgrades_dict = dict()
         for i, (u, h) in enumerate(upgrades):
             upgrades_dict[i] = {"name": u, "activationheight": h, "status": "active"}
@@ -30,7 +31,7 @@ class FlyclientBenchmark(FlyclientProof):
         self.activation_height = upgrades[-1][1]
         self.tip_height = chain_length
         self.is_fake = True
-        self.prefetch(samples)
+        await self.prefetch(samples)
 
     def calculate_proof_size(self, cache_nodes : bool) -> int:
         nodes: dict[str, list] = dict()
@@ -116,17 +117,20 @@ class FlyclientBenchmark(FlyclientProof):
             + blockchaininfo_size
         )
 
-if __name__ == '__main__':
-    client = ZcashClient.from_conf(CONF_PATH)
-    # client = ZcashClient("flyclient", "", 8232, "127.0.0.1")
+async def main():
+    # async with ZcashClient("flyclient", "", 8232, "127.0.0.1") as client:
+    async with ZcashClient.from_conf(CONF_PATH) as client:
 
-    # Example test run on small MMR
-    # proof = FlyclientBenchmark(client, enable_logging=True, difficulty_aware=True, override_chain_tip=903809)
-    # proof.prefetch([903803, 903806])
-    
-    proof = FlyclientBenchmark(client, enable_logging=True, difficulty_aware=True)
-    # proof.prefetch()
-    proof.prefetch_fake_chain(15, [('nu1', 0), ('nu2', 6)], [3, 5, 9])
-    print(f"Unoptimized: {proof.calculate_total_download_size_bytes('none')}")
-    print(f"Cache nodes: {proof.calculate_total_download_size_bytes('cache')}")
-    print(f"Aggregate: {proof.calculate_total_download_size_bytes('aggregate')}")
+        # Example test run on small MMR
+        # proof = FlyclientBenchmark(client, enable_logging=True, difficulty_aware=True, override_chain_tip=903809)
+        # proof.prefetch([903803, 903806])
+        
+        proof = await FlyclientBenchmark.create(client, enable_logging=False, difficulty_aware=True)
+        await proof.prefetch()
+        # await proof.prefetch_fake_chain(15, [('nu1', 0), ('nu2', 6)], [3, 5, 9])
+        print(f"Unoptimized: {proof.calculate_total_download_size_bytes('none')}")
+        print(f"Cache nodes: {proof.calculate_total_download_size_bytes('cache')}")
+        print(f"Aggregate: {proof.calculate_total_download_size_bytes('aggregate')}")
+
+if __name__ == '__main__':
+    asyncio.run(main())

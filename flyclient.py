@@ -2,13 +2,13 @@ from zcash_client import ZcashClient
 from zcash_mmr import *
 from sampling import *
 from ancestry_proof import path_to_root
-
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import asyncio
 
 class FlyclientProof:
     c: float
     L: float
     difficulty_aware: bool
+    override_chain_tip: int | None
     min_difficulty: int
     max_difficulty: int
     total_difficulty: int
@@ -33,9 +33,17 @@ class FlyclientProof:
     # Fake test chain
     is_fake: bool = False
 
+    @classmethod
+    async def create(cls, client: ZcashClient, c: float = 0.5, L: int = 100, override_chain_tip: int | None = None, enable_logging=True, difficulty_aware: bool = False):
+        instance = cls(client, c, L, override_chain_tip, enable_logging, difficulty_aware)
+        await instance.initialize()
+        return instance
+
     def __init__(self, client: ZcashClient, c: float = 0.5, L: int = 100, override_chain_tip: int | None = None, enable_logging = True, difficulty_aware: bool = False):
         self.client = client
         self.enable_logging = enable_logging
+        self.override_chain_tip = override_chain_tip
+        self.difficulty_aware = difficulty_aware
 
         # Check that c and L are valid
         if c <= 0 or c >= 1:
@@ -44,35 +52,43 @@ class FlyclientProof:
         if L <= 0:
             print("L should be positive. Falling back to L = 100")
             L = 100
+        self.c = c
+        self.L = L
 
+    async def initialize(self):
         # Get the tip and activation height
-        self.blockchaininfo: dict = client.send_command("getblockchaininfo")["result"]
+        response = await self.client.send_command("getblockchaininfo")
+        self.blockchaininfo: dict = response["result"]
         flyclient_activation = self.get_flyclient_activation()
-        if override_chain_tip is not None and override_chain_tip > flyclient_activation:
-            self.tip_height = int(override_chain_tip)
+        if self.override_chain_tip is not None and self.override_chain_tip > flyclient_activation:
+            self.tip_height = int(self.override_chain_tip)
         else:
             self.tip_height = int(self.blockchaininfo["blocks"]) - 100
         
         (self.branch_id, self.upgrade_name, self.activation_height) = self.get_network_upgrade_of_block(self.tip_height)
 
-        self.c = c
         max_L = math.trunc(self.c * (self.tip_height - flyclient_activation))
-        self.L = L if L < max_L else max_L
-        self.difficulty_aware = difficulty_aware
+        self.L = min(self.L, max_L)
 
         if self.difficulty_aware:
             mmr = Tree([], self.activation_height)
-            self.min_difficulty = int.from_bytes(bytes.fromhex(self.client.download_extra_data("gettotalwork", self.get_flyclient_activation() + 1)["total_work"]), byteorder='big')
-            self.max_difficulty = int.from_bytes(bytes.fromhex(self.client.download_node(self.upgrade_name, mmr.insertion_index_of_block(self.tip_height), True)["subtree_total_work"]), byteorder='big')
-            self.total_difficulty = int.from_bytes(bytes.fromhex(self.client.download_extra_data("gettotalwork", self.tip_height)["total_work"]), byteorder='big')
+            min_diff_response, max_diff_response, total_diff_response = await asyncio.gather(
+                self.client.download_extra_data("gettotalwork", self.get_flyclient_activation() + 1),
+                self.client.download_node(self.upgrade_name, mmr.insertion_index_of_block(self.tip_height), True),
+                self.client.download_extra_data("gettotalwork", self.tip_height)
+            )
+            
+            self.min_difficulty = int.from_bytes(bytes.fromhex(min_diff_response["total_work"]), byteorder='big')
+            self.max_difficulty = int.from_bytes(bytes.fromhex(max_diff_response["subtree_total_work"]), byteorder='big')
+            self.total_difficulty = int.from_bytes(bytes.fromhex(total_diff_response["total_work"]), byteorder='big')
         
         if self.activation_height == 0:
             print("Activation height not found.")
-        elif enable_logging:
+        elif self.enable_logging:
             print(f"Upgrade name: {self.upgrade_name}")
             print(f"Activation height: {self.activation_height}")
     
-    def prefetch(self, samples: list[int] = None):
+    async def prefetch(self, samples: list[int] = None):
         mmr = Tree([], self.activation_height)
         
         # Get the peaks at the tip
@@ -83,7 +99,7 @@ class FlyclientProof:
         if samples is not None:
             self.blocks_to_sample = samples
         elif self.difficulty_aware:
-            self.blocks_to_sample = self.sample_blocks_with_difficulty()
+            self.blocks_to_sample = await self.sample_blocks_with_difficulty()
         else:
             self.blocks_to_sample = self.sample_blocks()
         self.blocks_to_sample += self.get_activation_blocks(self.blocks_to_sample[0])
@@ -223,45 +239,7 @@ class FlyclientProof:
     def sample_blocks(self) -> list[int]:
         return blocks_to_sample(self.get_flyclient_activation() + 1, self.tip_height, self.c, self.L)
     
-    def build_difficulty_map(self) -> dict[int, int]:
-        difficulty_map: dict[int, int] = dict()
-        heights = range(self.get_flyclient_activation() + 1, self.tip_height)
-
-        def fetch_difficulty(height):
-            difficulty = int.from_bytes(
-                bytes.fromhex(self.client.download_extra_data("gettotalwork", height)["total_work"]), 
-                byteorder='big'
-            )
-            return height, difficulty
-
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            # Submit all tasks
-            futures = [executor.submit(fetch_difficulty, i) for i in heights]
-            
-            # Wait for all to complete and collect results
-            for future in as_completed(futures):
-                height, difficulty = future.result()
-                difficulty_map[height] = difficulty
-        
-        return difficulty_map
-
-    @staticmethod
-    def get_first_block_with_total_work(difficulty_map: dict[int, int], total_work: int) -> int:
-        start = min(difficulty_map.keys())
-        end = max(difficulty_map.keys())
-
-        while start != end:
-            middle = (start + end) // 2
-            if difficulty_map[middle] >= total_work:
-                end = middle
-            else:
-                start = middle + 1
-        
-        return end
-    
-    difficulty_cache: dict[int, int] = dict()
-
-    def sample_blocks_with_difficulty(self):     
+    async def sample_blocks_with_difficulty(self):     
         # Estimate the dificulty-aware L as L * total work of last block
         max_L = math.trunc(self.c * (self.total_difficulty - 1))
         diff_L = self.L * self.max_difficulty
@@ -270,12 +248,12 @@ class FlyclientProof:
 
         deterministic = [i for i in range(self.tip_height - self.L, self.tip_height)]
         random = set()
-        for d in difficulty_samples:
-            if d in self.difficulty_cache.keys():
-                random.add(self.difficulty_cache[d])
-            else:
-                block_index = self.client.download_extra_data("getfirstblockwithtotalwork", d.to_bytes(32, byteorder='big').hex())
-                self.difficulty_cache[d] = block_index['height']
-                random.add(block_index['height'])
+
+        # Process difficulty queries in parallel
+        requests = [self.client.download_extra_data("getfirstblockwithtotalwork", d.to_bytes(32, byteorder='big').hex()) for d in difficulty_samples]
+        responses = await asyncio.gather(*requests)
+
+        for r in responses:
+            random.add(r['height'])
         
         return list(random) + deterministic
