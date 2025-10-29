@@ -32,13 +32,13 @@ def verify_hash(leaf_node: dict, block_header: dict):
     
 # Block sampling
 def sample(n: int, min: int, max: int, delta: float):
-    if min <= 1:
-        raise ValueError("min must be greater than 1.")
-    
-    u_min = np.log(min - 1) / np.log(delta)
-    u_max = np.log(max - 1) / np.log(delta)
-    u_samples = np.array([_secure_random.uniform(u_min, u_max) for _ in range(n)])
-    return 1 + delta**u_samples
+    if min <= 0 or max <= 0 or max <= min:
+        raise ValueError("Invalid boundaries for sampling interval. They must be positive integers with max > min.")
+
+    u_samples = np.array([_secure_random.uniform(0, 1 - delta) for _ in range(n)])
+    distrib = 1 - delta**u_samples
+    scaled_distrib = min + distrib * (max - min)
+    return scaled_distrib
 
 def blocks_to_sample(activation_height: int, chaintip: int, c: float, L: int) -> list[int]:
     # probability of failure is bounded by 2**(-lambda)
