@@ -31,7 +31,7 @@ async def calc_total_size(client: ZcashClient, row: pd.Series, opt_lv: Flyclient
 async def gen_dataset(file_path: str, samples_file: str, type: __DATASET_TYPE):
     print(f"Generating file: {file_path}")
     samples = pd.read_csv(samples_file)
-    semaphore = asyncio.Semaphore(STEP)
+    semaphore = asyncio.Semaphore(STEP if type=='bandwidth' else 1000)
 
     async def bounded_calc(client: ZcashClient, row: pd.Series, opt_lv: FlyclientBenchmark._OPT_TYPE):
         async with semaphore:
@@ -41,7 +41,8 @@ async def gen_dataset(file_path: str, samples_file: str, type: __DATASET_TYPE):
         await client.open()
         match type:
             case 'attack':
-                sizes = [await calc_total_size(client, row, 'aggregate') for row in samples.itertuples(index=False)]
+                sizes = await asyncio.gather(*[bounded_calc(client, row, 'aggregate') for row in samples.itertuples(index=False)])
+                # sizes = [await calc_total_size(client, row, 'aggregate') for row in samples.itertuples(index=False)]
                 df = pd.DataFrame({
                     'height': [h for h in samples['chaintip']],
                     'c': samples['c'],

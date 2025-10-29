@@ -17,7 +17,8 @@ ITERATIONS = 30
 
 # ACTIVATION_HEIGHT = 903000
 START_HEIGHT = 904000
-CHAINTIP = 3504000
+# CHAINTIP = 3504000
+CHAINTIP = 3104000
 STEP = 25000
 
 Dh = 48 # Zcash hourly number of blocks mined
@@ -49,15 +50,14 @@ class DifficultySampler:
         difficulty_samples = difficulty_to_sample(min_diff, total_diff, c, diff_L)
         deterministic = [i for i in range(chaintip - L, chaintip)]
         random = await asyncio.gather(*[self.find_height(w) for w in difficulty_samples])
-        
-        return list(random) + deterministic
+        random.sort()
+        return random + deterministic
     
 async def gen_diffmap(file_path: int, start_height: int, end_height: int):
-    print(f"Generating file: {file_path}")
     heights = [h for h in range(start_height, end_height)]
     async with ZcashClient.from_conf(CONF_PATH, persistent=True) as client:
         await client.open()
-        semaphore = asyncio.Semaphore(STEP)
+        semaphore = asyncio.Semaphore(STEP / 10)
     
         async def bounded_download(h):
             async with semaphore:
@@ -73,10 +73,12 @@ async def gen_diffmap(file_path: int, start_height: int, end_height: int):
             'height': heights,
             'total_work': [r['total_work'] for r in responses]
         })
-        df.to_csv(file_path, index=False)
+        df.set_index('height', inplace=True)
+        df.sort_index()
+        print(df)
+        df.to_csv(file_path)
 
 async def gen_samples(file_path: str, var_params: bool, with_diff: bool) -> pd.DataFrame:
-    print(f"Generating file: {file_path}")
     async with ZcashClient.from_conf(CONF_PATH, persistent=True) as client:
         samples = pd.DataFrame(columns=sample_cols)
         preset : list[tuple[int, float, int, FlyclientBenchmark]] = list()
@@ -93,6 +95,7 @@ async def gen_samples(file_path: str, var_params: bool, with_diff: bool) -> pd.D
                 benchmark = await FlyclientBenchmark.create(client, enable_logging=False, difficulty_aware=with_diff, override_chain_tip=h)
                 preset.append((h, 0.5, 100, benchmark))
         
+        df_dict : dict[int, pd.DataFrame] = dict()
         if with_diff:
             sampler = DifficultySampler(DIFFMAP)
             for i in range(ITERATIONS):
@@ -109,14 +112,15 @@ async def gen_samples(file_path: str, var_params: bool, with_diff: bool) -> pd.D
                 new_rows = [
                     {'chaintip': h, 'c': c, 'L': l, 'samples': blocks} for (h, c, l, _), blocks in zip(preset, sample_lists, strict=True)
                 ]
-                samples = pd.concat([samples, pd.DataFrame(new_rows)], ignore_index=True)
+                df_dict[i] = pd.DataFrame(new_rows)
         else:
             for i in range(ITERATIONS):
                 print(f"Sampling with height ({i+1}/{ITERATIONS})")
                 new_rows = [
                     {'chaintip': h, 'c': c, 'L': l, 'samples': obj.sample_blocks()} for h, c, l, obj in preset
                 ]
-                samples = pd.concat([samples, pd.DataFrame(new_rows)], ignore_index=True)
+                df_dict[i] = pd.DataFrame(new_rows)
+        samples = pd.concat([df for _, df in df_dict.items()], ignore_index=True)
         samples.sort_index()
 
         if not os.path.isfile(file_path):
@@ -138,6 +142,7 @@ async def main():
 
     for filepath, var_params, with_diff in jobs:
         if not os.path.isfile(filepath):
+            print(f"Generating file: {filepath}")
             await gen_samples(filepath, var_params, with_diff)
 
 if __name__ == '__main__':
