@@ -12,19 +12,22 @@ class ZcashClient:
     rpcpassword = "yourpassword"
     rpcport = 8232
     rpcbind = "127.0.0.1"
+
+    persistent: bool = False
     
-    def __init__(self, user: str, password: str, port: int, host: str):
+    def __init__(self, user: str, password: str, port: int, host: str, persistent: bool = False):
         """Initialize the client with manually provided configuration."""
         self.rpcbind = host
         self.rpcport = port
         self.rpcpassword = password
         self.rpcuser = user
         self._session = None
+        self.persistent = persistent
 
     @classmethod
-    def from_conf(cls, config_path: str):
+    def from_conf(cls, config_path: str, persistent: bool = False):
         """Initialize the client with a configuration file path."""
-        instance = cls(cls.rpcuser, cls.rpcpassword, cls.rpcport, cls.rpcbind)
+        instance = cls(cls.rpcuser, cls.rpcpassword, cls.rpcport, cls.rpcbind, persistent)
         instance.load_conf(config_path)
         return instance
 
@@ -39,11 +42,13 @@ class ZcashClient:
         self.rpcbind = parser[SECTION]["rpcbind"]
 
     async def __aenter__(self):
-        await self.open()
+        if not self.persistent:
+            await self.open()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.close()
+        if not self.persistent:
+            await self.close()
 
     async def open(self):
         """Open the aiohttp session."""
