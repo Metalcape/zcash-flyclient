@@ -4,4 +4,5 @@ zcash.conf
 __pycache__
 test*
 experiments/*.txt
+experiments/*.csv
 profile.svg
