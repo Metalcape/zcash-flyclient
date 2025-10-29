@@ -4,3 +4,4 @@ zcash.conf
 __pycache__
 test*
 experiments/*.txt
+profile.svg
