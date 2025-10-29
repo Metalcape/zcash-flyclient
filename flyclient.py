@@ -226,6 +226,8 @@ class FlyclientProof:
     def get_activation_blocks(self, first_sampled_block: int) -> list[int]:
         _, first_upgrade, _ = self.get_network_upgrade_of_block(first_sampled_block)
         _, second_activation = self.next_upgrade(first_upgrade)
+        if second_activation is None:
+            return []
         blocks = list()
         for _, v in self.blockchaininfo['upgrades'].items():
             activation = v['activationheight']
