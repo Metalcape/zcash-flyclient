@@ -2,7 +2,8 @@ venv/
 .vscode
 zcash.conf
 __pycache__
-test*
+test.txt
+test.py
 experiments/*.txt
 experiments/*.csv
 profile.svg
