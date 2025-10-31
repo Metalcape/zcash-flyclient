@@ -44,7 +44,7 @@ class DifficultySampler:
     
     async def sample(self, chaintip: int, c: float, L: int, min_diff: int,  max_diff: int, total_diff: int):     
         max_L = math.trunc(c * (total_diff - 1))
-        diff_L = L * max_diff
+        diff_L = total_diff - max_diff
         diff_L = min(max_L, diff_L)
         
         difficulty_samples = difficulty_to_sample(min_diff, total_diff, c, diff_L)
@@ -81,6 +81,7 @@ async def gen_diffmap(file_path: int, start_height: int, end_height: int):
 async def gen_samples(file_path: str, var_params: bool, with_diff: bool) -> pd.DataFrame:
     async with ZcashClient.from_conf(CONF_PATH, persistent=True) as client:
         samples = pd.DataFrame(columns=sample_cols)
+        params : list[tuple[int, float, int]] = list()
         preset : list[tuple[int, float, int, FlyclientBenchmark]] = list()
 
         await client.open()
@@ -88,13 +89,22 @@ async def gen_samples(file_path: str, var_params: bool, with_diff: bool) -> pd.D
             for h in range(START_HEIGHT, CHAINTIP, STEP):
                 for c in C_VALUES:
                     for l in L_VALUES:
-                        benchmark = await FlyclientBenchmark.create(client, c, l, enable_logging=False, difficulty_aware=with_diff, override_chain_tip=h)
-                        preset.append((h, c, l, benchmark))
+                        params.append((h, c, l))
         else:
             for h in range(START_HEIGHT, CHAINTIP, STEP):
-                benchmark = await FlyclientBenchmark.create(client, enable_logging=False, difficulty_aware=with_diff, override_chain_tip=h)
-                preset.append((h, 0.5, 100, benchmark))
+                params.append((h, 0.5, 100))
         
+        objects = await asyncio.gather(
+            *[FlyclientBenchmark.create(
+                client, 
+                c, 
+                l, 
+                enable_logging=False, 
+                difficulty_aware=with_diff, 
+                override_chain_tip=h
+            ) for h, c, l in params])
+        preset = [(h, c, l, obj) for (h, c, l), obj in zip(params, objects, strict=True)]
+
         df_dict : dict[int, pd.DataFrame] = dict()
         if with_diff:
             sampler = DifficultySampler(DIFFMAP)
@@ -110,7 +120,8 @@ async def gen_samples(file_path: str, var_params: bool, with_diff: bool) -> pd.D
                         obj.total_difficulty
                     ) for h, c, l, obj in preset])
                 new_rows = [
-                    {'chaintip': h, 'c': c, 'L': l, 'samples': blocks} for (h, c, l, _), blocks in zip(preset, sample_lists, strict=True)
+                    {'chaintip': h, 'c': c, 'L': l, 'samples': blocks} 
+                    for (h, c, l, _), blocks in zip(preset, sample_lists, strict=True)
                 ]
                 df_dict[i] = pd.DataFrame(new_rows)
         else:

@@ -71,15 +71,15 @@ class FlyclientProof:
         self.L = min(self.L, max_L)
 
         if self.difficulty_aware:
-            mmr = Tree([], self.activation_height)
+            # We sample blocks statistically in the difficulty interval [min, max]
             min_diff_response, max_diff_response, total_diff_response = await asyncio.gather(
                 self.client.download_extra_data("gettotalwork", self.get_flyclient_activation() + 1),
-                self.client.download_node(self.upgrade_name, mmr.insertion_index_of_block(self.tip_height), True),
+                self.client.download_extra_data("gettotalwork", self.tip_height - self.L),
                 self.client.download_extra_data("gettotalwork", self.tip_height)
             )
             
             self.min_difficulty = int.from_bytes(bytes.fromhex(min_diff_response["total_work"]), byteorder='big')
-            self.max_difficulty = int.from_bytes(bytes.fromhex(max_diff_response["subtree_total_work"]), byteorder='big')
+            self.max_difficulty = int.from_bytes(bytes.fromhex(max_diff_response["total_work"]), byteorder='big')
             self.total_difficulty = int.from_bytes(bytes.fromhex(total_diff_response["total_work"]), byteorder='big')
         
         if self.activation_height == 0:
@@ -242,9 +242,10 @@ class FlyclientProof:
         return blocks_to_sample(self.get_flyclient_activation() + 1, self.tip_height, self.c, self.L)
     
     async def sample_blocks_with_difficulty(self):     
-        # Estimate the dificulty-aware L as L * total work of last block
+        # Estimate the dificulty-aware L as the total_difficulty - max_difficulty
+        # L is the fraction of difficulty that is always sampled
         max_L = math.trunc(self.c * (self.total_difficulty - 1))
-        diff_L = self.L * self.max_difficulty
+        diff_L = self.total_difficulty - self.max_difficulty
         diff_L = min(max_L, diff_L)
         difficulty_samples = difficulty_to_sample(self.min_difficulty, self.total_difficulty, self.c, diff_L)
 
