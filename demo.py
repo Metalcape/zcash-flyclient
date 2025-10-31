@@ -138,7 +138,10 @@ class FlyclientDemo(FlyclientProof):
                     return False
 
             # Download the leaf, and verify that it corresponds to the header using the hash field
-            node_dict = await self.client.download_node(current_upgrade, self.leaves[block_height], True)
+            if self.leaves[block_height] in self.node_cache[current_upgrade]:
+                node_dict = self.node_cache[current_upgrade][self.leaves[block_height]].to_dict()
+            else:
+                node_dict = await self.client.download_node(current_upgrade, self.leaves[block_height], True)
             if verify_hash(node_dict, header) == False:
                 print(f"Invalid hash for leaf node {self.leaves[block_height]} at block height {block_height}")
                 return False

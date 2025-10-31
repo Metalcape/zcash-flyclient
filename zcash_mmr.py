@@ -165,8 +165,8 @@ class Node:
                 + serialize_compact_uint(self.nOrchardTxCount))
         return buf
     
-    def to_json(self) -> str:
-        ''' Serializes a node to a JSON string'''
+    def to_dict(self) -> dict:
+        '''Convert to a dictionary'''
         obj = {}
         obj["subtree_commitment"] = self.hashSubtreeCommitment.hex()
         obj["start_time"] = self.nEarliestTimestamp
@@ -185,6 +185,11 @@ class Node:
             obj["orchard_tx"] = self.nOrchardTxCount
         obj["consensus_branch_id"] = self.consensusBranchId.hex()
 
+        return obj
+    
+    def to_json(self) -> str:
+        ''' Serializes a node to a JSON string'''
+        obj = self.to_dict()
         return json.dumps(obj, indent=1)
 
 # Combine nodes
