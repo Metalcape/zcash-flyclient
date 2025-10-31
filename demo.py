@@ -5,7 +5,6 @@ from sampling import *
 from ancestry_proof import AncestryNode, AncestryProof
 
 import json
-import requests
 import asyncio
 
 class FlyclientDemo(FlyclientProof):
@@ -17,66 +16,61 @@ class FlyclientDemo(FlyclientProof):
         super(FlyclientDemo, self).__init__(client, c, L, override_chain_tip, enable_logging, difficulty_aware)
     
     async def download_auth_data_root(self, height) -> str | None:
-        try:
-            result = await self.client.download_extra_data("getauthdataroot", height)
-        except requests.exceptions.RequestException as e:
-            print(f"Response error when downloading auth data root: {e.response}")
-            return None
+        result = await self.client.download_extra_data("getauthdataroot", height)
         return result["auth_data_root"]
     
     async def download_tx_count(self, height) -> dict | None:
-        try:
-            result = await self.client.download_extra_data("getshieldedtxcount", height)
-        except requests.exceptions.RequestException as e:
-            print(f"Response error when downloading shielded transaction counts: {e.response}")
-            return None
+        result = await self.client.download_extra_data("getshieldedtxcount", height)
         return result
 
-    async def download_peaks(self, upgrade_name: str, peak_indices: list) -> list[Node] | None:
-        peak_nodes: list[Node] = []
+    async def download_peaks(self, upgrade_name: str, peak_indices: list[int]) -> list[Node] | None:
+        peak_nodes: dict[int, Node] = {}
+        download_list: list[int] = []
         for i in peak_indices:
             if i in self.node_cache[upgrade_name].keys():
-                peak_nodes.append(self.node_cache[upgrade_name][i])
+                peak_nodes[i] = self.node_cache[upgrade_name][i]
             else:
-                try:
-                    node_json = await self.client.download_node(upgrade_name, i, True)
-                except requests.exceptions.RequestException as e:
-                    print(f"Response error when downloading peak node {i}: {e.response}")
-                    return None
-                node = Node.from_dict(node_json)
-                peak_nodes.append(node)
-                self.node_cache[upgrade_name][i] = node
-        return peak_nodes
+                download_list.append(i)
+        
+        nodes_json = await asyncio.gather(*[self.client.download_node(upgrade_name, i, True) for i in download_list])
 
-    async def download_ancestry_proof(self, upgrade_name: str, nodes: list) -> list[AncestryNode] | None:
+        for i, n in zip(download_list, nodes_json, strict=True):
+            node = Node.from_dict(n)
+            peak_nodes[i] = node
+            self.node_cache[upgrade_name][i] = node
+        
+        return list(peak_nodes.values())
+
+    async def download_ancestry_proof(self, upgrade_name: str, node_index: list) -> list[AncestryNode] | None:
         siblings: list[AncestryNode] = []
         ancestry_node: AncestryNode = None
-        for n, t in nodes:
+        download_list = []
+        for n, t in node_index:
             if n in self.node_cache[upgrade_name].keys():
                 ancestry_node = AncestryNode(n, self.node_cache[upgrade_name][n], t)
                 siblings.append(ancestry_node)
             else:
-                try:
-                    json_obj = await self.client.download_node(upgrade_name, n, True)
-                except requests.exceptions.RequestException as e:
-                    print(f"Response error when downloading history node {n}: {e.response}")
-                    return None
-                node = Node.from_dict(json_obj)
-                ancestry_node = AncestryNode(n, node, t)
-                siblings.append(ancestry_node)
-                self.node_cache[upgrade_name][n] = node
+                siblings.append(None)
+                download_list.append((n, t))
+            
+        nodes_json = await asyncio.gather(*[self.client.download_node(upgrade_name, i, True) for i, _ in download_list])
+        ancestry_nodes: list[AncestryNode] = []
+        for (n, t), data in zip(download_list, nodes_json, strict=True):
+            node = Node.from_dict(data)
+            ancestry_node = AncestryNode(n, node, t)
+            ancestry_nodes.append(ancestry_node)
+            self.node_cache[upgrade_name][n] = node
+
+        for i in reversed(range(len(siblings))):
+            if siblings[i] is None:
+                siblings[i] = ancestry_nodes.pop()
+
         return siblings
     
     async def download_header(self, height) -> dict | None:
         if height in self.block_cache.keys():
             return self.block_cache[height]
-
-        try:
-            header = await self.client.download_header(height, True)
-        except requests.exceptions.RequestException as e:
-            print(f"Response error when downloading chain tip: {e.response}")
-            return None
-        
+        header = await self.client.download_header(height, True)
         self.block_cache[height] = header
         return header
     
@@ -144,15 +138,11 @@ class FlyclientDemo(FlyclientProof):
                     return False
 
             # Download the leaf, and verify that it corresponds to the header using the hash field
-            try:
-                node_dict = await self.client.download_node(current_upgrade, self.leaves[block_height], True)
-                if verify_hash(node_dict, header) == False:
-                    print(f"Invalid hash for leaf node {self.leaves[block_height]} at block height {block_height}")
-                    return False
-                leaf_node = Node.from_dict(node_dict)
-            except requests.exceptions.RequestException as e:
-                print(f"Response error when downloading transaction info: {e.response}")
+            node_dict = await self.client.download_node(current_upgrade, self.leaves[block_height], True)
+            if verify_hash(node_dict, header) == False:
+                print(f"Invalid hash for leaf node {self.leaves[block_height]} at block height {block_height}")
                 return False
+            leaf_node = Node.from_dict(node_dict)
             
             # Download peaks at sampled block - 1
             activation_height = self.get_activation_of_upgrade(current_upgrade)
@@ -188,11 +178,13 @@ class FlyclientDemo(FlyclientProof):
 
 async def main():
     # async with ZcashClient("flyclient", "", 8232, "127.0.0.1") as client:
-    async with ZcashClient.from_conf(CONF_PATH) as client:
+    async with ZcashClient.from_conf(CONF_PATH, persistent=True) as client:
+        await client.open()
         proof = await FlyclientDemo.create(client, difficulty_aware=True, enable_logging=False)
         await proof.prefetch()
         if await proof.download_and_verify() is True:
             print("Success!")
+        await client.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
