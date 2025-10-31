@@ -253,8 +253,10 @@ class FlyclientProof:
         random = set()
 
         # Process difficulty queries in parallel
-        requests = [self.client.download_extra_data("getfirstblockwithtotalwork", d.to_bytes(32, byteorder='big').hex()) for d in difficulty_samples]
-        responses = await asyncio.gather(*requests)
+        # requests = [self.client.download_extra_data("getfirstblockwithtotalwork", d.to_bytes(32, byteorder='big').hex()) for d in difficulty_samples]
+        # responses = await asyncio.gather(*requests)
+        difficulty_strings = [d.to_bytes(32, byteorder='big').hex() for d in difficulty_samples]
+        responses = await self.client.get_first_blocks_with_total_work(difficulty_strings)
 
         for r in responses:
             random.add(r['height'])

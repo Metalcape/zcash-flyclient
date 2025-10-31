@@ -118,15 +118,7 @@ class ZcashClient:
     
     async def download_header(self, height: int, verbose: bool):
         """Download a block header at the given height."""
-        # Get block hash
-        hash_response = await self.send_command("getblockhash", [f"{height}"])
-        if hash_response["error"] is None:
-            hash_value = hash_response['result']
-        else:
-            raise RuntimeError(f"Error getting block hash: {hash_response['error']}")
-        
-        # Get block header
-        response = await self.send_command("getblockheader", [f"{hash_value}", (1 if verbose else 0)])
+        response = await self.send_command("getblockheader", [f"{height}", (1 if verbose else 0)])
         if response["error"] is None:
             return response["result"]
         else:
@@ -157,8 +149,39 @@ class ZcashClient:
         Returns:
             List of results in the same order as commands
         """
-        tasks = [self.send_command(method, params) for method, params in commands]
-        return await asyncio.gather(*tasks)
+        commands = [(c, self._prepare_params(c, l)) for c, l in commands]
+        url = f"http://{self.rpcbind}:{self.rpcport}/"
+        headers = {"Content-Type": "application/json"}
+        payloads = [{
+            "jsonrpc": "1.0",
+            "id": "python-client",
+            "method": method,
+            "params": params
+        } for method, params in commands]
+
+        async with aiohttp.ClientSession(auth=aiohttp.BasicAuth(self.rpcuser, self.rpcpassword)) as session:
+            tasks = [session.post(url, headers=headers, json=payload) for payload in payloads]
+            responses = await asyncio.gather(*tasks)
+            json_data = await asyncio.gather(*[r.json() for r in responses])
+        return json_data
+    
+    async def download_headers_parallel(self, block_heights: list[int]):
+        """Download multiple block headers in parallel."""
+        commands = [("getblockheader", [height]) for height in block_heights]
+        responses = await self.send_commands_parallel(commands)
+        return [r['result'] for r in responses]
+        
+    async def download_nodes_parallel(self, network_upgrade: str, nodes: list[int], verbose: bool):
+        """Download multiple history nodes in parallel."""
+        commands = [("gethistorynode", [network_upgrade, i, verbose]) for i in nodes]
+        responses = await self.send_commands_parallel(commands)
+        return [r['result'] for r in responses]
+
+    async def get_first_blocks_with_total_work(self, difficulties: list[str]):
+        """Get the first block with total work equal or higher than `d`, for each `d` value in `difficulties`."""
+        commands = [("getfirstblockwithtotalwork", [d]) for d in difficulties]
+        responses = await self.send_commands_parallel(commands)
+        return [r['result'] for r in responses]
 
 async def main():
     cmd = sys.argv[1]
@@ -167,7 +190,7 @@ async def main():
 
     # async with ZcashClient("flyclient", "", 8232, "127.0.0.1") as client:
     async with ZcashClient.from_conf(CONF_PATH) as client:
-        result = client.send_command(cmd, params)
+        result = await client.send_command(cmd, params)
         
         # Examples
         # result = client.send_command("getblock", [sys.argv[1], 1])

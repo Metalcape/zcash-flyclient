@@ -32,7 +32,8 @@ class FlyclientDemo(FlyclientProof):
             else:
                 download_list.append(i)
         
-        nodes_json = await asyncio.gather(*[self.client.download_node(upgrade_name, i, True) for i in download_list])
+        # nodes_json = await asyncio.gather(*[self.client.download_node(upgrade_name, i, True) for i in download_list])
+        nodes_json = await self.client.download_nodes_parallel(upgrade_name, download_list, True)
 
         for i, n in zip(download_list, nodes_json, strict=True):
             node = Node.from_dict(n)
@@ -53,7 +54,8 @@ class FlyclientDemo(FlyclientProof):
                 siblings.append(None)
                 download_list.append((n, t))
             
-        nodes_json = await asyncio.gather(*[self.client.download_node(upgrade_name, i, True) for i, _ in download_list])
+        # nodes_json = await asyncio.gather(*[self.client.download_node(upgrade_name, i, True) for i, _ in download_list])
+        nodes_json = await self.client.download_nodes_parallel(upgrade_name, [i for i, _ in download_list], True)
         ancestry_nodes: list[AncestryNode] = []
         for (n, t), data in zip(download_list, nodes_json, strict=True):
             node = Node.from_dict(data)
@@ -73,6 +75,23 @@ class FlyclientDemo(FlyclientProof):
         header = await self.client.download_header(height, True)
         self.block_cache[height] = header
         return header
+    
+    async def download_headers(self, heights: list[int]) -> dict[int, dict | None]:
+        headers : dict[int, dict] = {}
+        download_list = []
+        for h in heights:
+            if h in self.block_cache.keys():
+                headers[h] = self.block_cache[h]
+            else:
+                download_list.append(h)
+
+        downloaded_headers = await self.client.download_headers_parallel(download_list)
+
+        for h, header in zip(download_list, downloaded_headers, strict=True):
+            headers[h] = header
+            self.block_cache[h] = header
+        
+        return headers
     
     async def verify_header(self, block_header: dict) -> bool:
         blockcommitments = block_header["blockcommitments"]
@@ -102,9 +121,19 @@ class FlyclientDemo(FlyclientProof):
             print(f"Fatal: header verification failed for chaintip block {self.tip_height}")
             return False
         
+        headers = await self.download_headers(self.blocks_to_sample)
+        peaks = {
+            upgrade : [
+                Node.from_dict(d)
+                for d in await self.client.download_nodes_parallel(upgrade, nodes, True)
+            ]
+            for upgrade, nodes in self.peaks.items()
+        }
+        
         for block_height in self.blocks_to_sample:
             # Download header
-            header = await self.download_header(block_height)
+            # header = await self.download_header(block_height)
+            header = headers[block_height]
             if header is None: return False
 
             if self.enable_logging: 
@@ -118,7 +147,8 @@ class FlyclientDemo(FlyclientProof):
             
             current_upgrade = self.upgrade_names_of_samples[block_height]
             current_branch_id = self.get_branch_id_of_upgrade(current_upgrade)
-            peak_nodes = await self.download_peaks(current_upgrade, self.peaks[current_upgrade])
+            # peak_nodes = await self.download_peaks(current_upgrade, self.peaks[current_upgrade])
+            peak_nodes = peaks[current_upgrade]
             
             # Use the tip header if at most recent upgrade
             # Otherwise, download the last header for the current upgrade
