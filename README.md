@@ -46,5 +46,7 @@ python ./zcash_client.py getblockchaininfo
 - [x] Verify sampled blocks' rightmost MMR tree leaf using the header's own `chainhistoryroot`
 - [x] Verify block headers' proof-of-work
 - [x] Use the `authdataroot` field to verify the `blockcommitments` field in the header
-- [ ] Implement difficulty-based sampling of blocks using the $(c, L)$ parametrized adversary model (will probably require changes to both RPC and state)
+- [x] Implement difficulty-based sampling of blocks using the $(c, L)$ parametrized adversary model
+- [ ] Non-interactive proof using Fiat-Shamir heuristic
+
 
