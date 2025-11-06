@@ -1,19 +1,24 @@
 from flyclient import FlyclientProof
 from zcash_client import ZcashClient, CONF_PATH
 from zcash_mmr import Node, generate_block_commitments
-from sampling import *
+from sampling import FlyclientSampler
 from ancestry_proof import AncestryNode, AncestryProof
 
 import json
 import asyncio
+import equihash
+
+# Equihash parameters
+SOL_K = 9
+SOL_N = 200
 
 class FlyclientDemo(FlyclientProof):
     leaves: dict[int, int]
     node_cache: dict[str, dict[int, Node]]
     block_cache: dict[int, dict]
 
-    def __init__(self, client: ZcashClient, c: float = 0.5, L: int = 100, override_chain_tip: int | None = None, enable_logging = True, difficulty_aware: bool = False):
-        super(FlyclientDemo, self).__init__(client, c, L, override_chain_tip, enable_logging, difficulty_aware)
+    def __init__(self, client: ZcashClient, c: float = 0.5, L: int = 100, override_chain_tip: int | None = None, enable_logging = True, difficulty_aware = False, non_interactive = False):
+        super(FlyclientDemo, self).__init__(client, c, L, override_chain_tip, enable_logging, difficulty_aware, non_interactive)
     
     async def download_auth_data_root(self, height) -> str | None:
         result = await self.client.download_extra_data("getauthdataroot", height)
@@ -208,6 +213,27 @@ class FlyclientDemo(FlyclientProof):
             print(f"Verified block {block_height}")
 
         return True
+    
+# PoW
+def verify_pow(block_header: dict) -> bool:
+    pow_sol = bytes.fromhex(block_header["solution"])
+    pow_header = (
+        int(block_header["version"]).to_bytes(4, 'little', signed=True) 
+        + bytes.fromhex(block_header["previousblockhash"] )
+        + bytes.fromhex(block_header["merkleroot"])
+        + bytes.fromhex(block_header["blockcommitments"])
+        + int(block_header["time"]).to_bytes(4, 'little', signed=False)
+        + bytes.fromhex(block_header["bits"])
+        + bytes.fromhex(block_header["nonce"])
+    )
+
+    return equihash.verify(SOL_N, SOL_K, pow_header, pow_sol)
+
+def verify_hash(leaf_node: dict, block_header: dict):
+    # Assumes that the block hash was already verified
+    header_hash = bytes.fromhex(block_header["hash"])
+    subtree_commitment = bytes.fromhex(leaf_node["subtree_commitment"])[::-1]
+    return header_hash == subtree_commitment
 
 async def main():
     # async with ZcashClient("flyclient", "", 8232, "127.0.0.1") as client:

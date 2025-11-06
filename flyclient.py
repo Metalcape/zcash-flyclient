@@ -1,6 +1,6 @@
 from zcash_client import ZcashClient
 from zcash_mmr import *
-from sampling import *
+from sampling import FlyclientSampler
 from ancestry_proof import path_to_root
 import asyncio
 
@@ -8,12 +8,14 @@ class FlyclientProof:
     c: float
     L: float
     difficulty_aware: bool
+    non_interactive: bool
     override_chain_tip: int | None
     min_difficulty: int
     max_difficulty: int
     total_difficulty: int
 
     client: ZcashClient
+    sampler: FlyclientSampler
     enable_logging: bool
     blockchaininfo: dict
     tip_height: int
@@ -34,16 +36,17 @@ class FlyclientProof:
     is_fake: bool = False
 
     @classmethod
-    async def create(cls, client: ZcashClient, c: float = 0.5, L: int = 100, override_chain_tip: int | None = None, enable_logging=True, difficulty_aware: bool = False):
-        instance = cls(client, c, L, override_chain_tip, enable_logging, difficulty_aware)
+    async def create(cls, client: ZcashClient, c: float = 0.5, L: int = 100, override_chain_tip: int | None = None, enable_logging=True, difficulty_aware = False,non_interactive = False):
+        instance = cls(client, c, L, override_chain_tip, enable_logging, difficulty_aware, non_interactive)
         await instance.initialize()
         return instance
 
-    def __init__(self, client: ZcashClient, c: float = 0.5, L: int = 100, override_chain_tip: int | None = None, enable_logging = True, difficulty_aware: bool = False):
+    def __init__(self, client: ZcashClient, c: float = 0.5, L: int = 100, override_chain_tip: int | None = None, enable_logging = True, difficulty_aware = False, non_interactive = False):
         self.client = client
         self.enable_logging = enable_logging
         self.override_chain_tip = override_chain_tip
         self.difficulty_aware = difficulty_aware
+        self.non_interactive = non_interactive
 
         # Check that c and L are valid
         if c <= 0 or c >= 1:
@@ -81,6 +84,27 @@ class FlyclientProof:
             self.min_difficulty = int.from_bytes(bytes.fromhex(min_diff_response["total_work"]), byteorder='big')
             self.max_difficulty = int.from_bytes(bytes.fromhex(max_diff_response["total_work"]), byteorder='big')
             self.total_difficulty = int.from_bytes(bytes.fromhex(total_diff_response["total_work"]), byteorder='big')
+
+            # Estimate the dificulty-aware L as the total_difficulty - max_difficulty
+            # L is the fraction of difficulty that is always sampled
+            max_L = math.trunc(self.c * (self.total_difficulty - 1))
+            diff_L = self.total_difficulty - self.max_difficulty
+            diff_L = min(max_L, diff_L)
+
+            a = self.min_difficulty
+            N = self.total_difficulty
+            L = diff_L
+            
+        else:
+            a = flyclient_activation
+            N = self.tip_height
+            L = self.L
+        
+        if self.non_interactive:
+            tip_block = await self.client.download_header(self.tip_height, True)
+            self.sampler = FlyclientSampler(a, N, L, self.c, tip_block['hash'])
+        else:
+            self.sampler = FlyclientSampler(a, N, L, self.c)
         
         if self.activation_height == 0:
             print("Activation height not found.")
@@ -239,15 +263,14 @@ class FlyclientProof:
         return blocks
     
     def sample_blocks(self) -> list[int]:
-        return blocks_to_sample(self.get_flyclient_activation() + 1, self.tip_height, self.c, self.L)
+        if self.sampler is not None:
+            return self.sampler.blocks_to_sample()
     
     async def sample_blocks_with_difficulty(self):     
-        # Estimate the dificulty-aware L as the total_difficulty - max_difficulty
-        # L is the fraction of difficulty that is always sampled
-        max_L = math.trunc(self.c * (self.total_difficulty - 1))
-        diff_L = self.total_difficulty - self.max_difficulty
-        diff_L = min(max_L, diff_L)
-        difficulty_samples = difficulty_to_sample(self.min_difficulty, self.total_difficulty, self.c, diff_L)
+        if self.sampler is None:
+            return None
+        else:
+            difficulty_samples = self.sampler.difficulty_to_sample()
 
         deterministic = [i for i in range(self.tip_height - self.L, self.tip_height)]
         random = set()

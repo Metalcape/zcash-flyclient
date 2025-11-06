@@ -8,8 +8,8 @@ import asyncio
 class FlyclientBenchmark(FlyclientProof):
     _OPT_TYPE = Literal['none', 'cache', 'aggregate']
 
-    def __init__(self, client: ZcashClient, c: float = 0.5, L: int = 100, override_chain_tip: int | None = None, enable_logging = True, difficulty_aware: bool = False):
-        super(FlyclientBenchmark, self).__init__(client, c, L, override_chain_tip, enable_logging, difficulty_aware)
+    def __init__(self, client: ZcashClient, c: float = 0.5, L: int = 100, override_chain_tip: int | None = None, enable_logging = True, difficulty_aware = False, non_interactive = False):
+        super(FlyclientBenchmark, self).__init__(client, c, L, override_chain_tip, enable_logging, difficulty_aware, non_interactive)
     
     def generate_sample_set(self, length: int, with_difficulty : bool = True) -> list[list[int]]:
         samples : list[list[int]] = list()
