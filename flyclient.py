@@ -36,12 +36,28 @@ class FlyclientProof:
     is_fake: bool = False
 
     @classmethod
-    async def create(cls, client: ZcashClient, c: float = 0.5, L: int = 100, override_chain_tip: int | None = None, enable_logging=True, difficulty_aware = False,non_interactive = False):
+    async def create(cls, 
+                    client: ZcashClient, 
+                    c: float = 0.5, 
+                    L: int = 100, 
+                    override_chain_tip: int | None = None, 
+                    enable_logging=True, 
+                    difficulty_aware = False, 
+                    non_interactive = False):
+        
         instance = cls(client, c, L, override_chain_tip, enable_logging, difficulty_aware, non_interactive)
         await instance.initialize()
         return instance
 
-    def __init__(self, client: ZcashClient, c: float = 0.5, L: int = 100, override_chain_tip: int | None = None, enable_logging = True, difficulty_aware = False, non_interactive = False):
+    def __init__(self, 
+                client: ZcashClient, 
+                c: float = 0.5, 
+                L: int = 100, 
+                override_chain_tip: int | None = None, 
+                enable_logging = True, 
+                difficulty_aware = False, 
+                non_interactive = False):
+        
         self.client = client
         self.enable_logging = enable_logging
         self.override_chain_tip = override_chain_tip

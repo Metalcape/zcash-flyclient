@@ -17,7 +17,15 @@ class FlyclientDemo(FlyclientProof):
     node_cache: dict[str, dict[int, Node]]
     block_cache: dict[int, dict]
 
-    def __init__(self, client: ZcashClient, c: float = 0.5, L: int = 100, override_chain_tip: int | None = None, enable_logging = True, difficulty_aware = False, non_interactive = False):
+    def __init__(self, 
+                client: ZcashClient, 
+                c: float = 0.5, 
+                L: int = 100, 
+                override_chain_tip: int | None = None, 
+                enable_logging = True, 
+                difficulty_aware = False, 
+                non_interactive = False):
+        
         super(FlyclientDemo, self).__init__(client, c, L, override_chain_tip, enable_logging, difficulty_aware, non_interactive)
     
     async def download_auth_data_root(self, height) -> str | None:
@@ -37,8 +45,8 @@ class FlyclientDemo(FlyclientProof):
             else:
                 download_list.append(i)
         
-        # nodes_json = await asyncio.gather(*[self.client.download_node(upgrade_name, i, True) for i in download_list])
-        nodes_json = await self.client.download_nodes_parallel(upgrade_name, download_list, True)
+        nodes_json = await asyncio.gather(*[self.client.download_node(upgrade_name, i, True) for i in download_list])
+        # nodes_json = await self.client.download_nodes_parallel(upgrade_name, download_list, True)
 
         for i, n in zip(download_list, nodes_json, strict=True):
             node = Node.from_dict(n)
@@ -59,8 +67,8 @@ class FlyclientDemo(FlyclientProof):
                 siblings.append(None)
                 download_list.append((n, t))
             
-        # nodes_json = await asyncio.gather(*[self.client.download_node(upgrade_name, i, True) for i, _ in download_list])
-        nodes_json = await self.client.download_nodes_parallel(upgrade_name, [i for i, _ in download_list], True)
+        nodes_json = await asyncio.gather(*[self.client.download_node(upgrade_name, i, True) for i, _ in download_list])
+        # nodes_json = await self.client.download_nodes_parallel(upgrade_name, [i for i, _ in download_list], True)
         ancestry_nodes: list[AncestryNode] = []
         for (n, t), data in zip(download_list, nodes_json, strict=True):
             node = Node.from_dict(data)
@@ -239,7 +247,7 @@ async def main():
     # async with ZcashClient("flyclient", "", 8232, "127.0.0.1") as client:
     async with ZcashClient.from_conf(CONF_PATH, persistent=True) as client:
         await client.open()
-        proof = await FlyclientDemo.create(client, difficulty_aware=True, enable_logging=False)
+        proof = await FlyclientDemo.create(client, difficulty_aware=True, enable_logging=False, non_interactive=True)
         await proof.prefetch()
         if await proof.download_and_verify() is True:
             print("Success!")
