@@ -1,5 +1,6 @@
 import math
 from secrets import SystemRandom
+from randomgen import ChaCha
 import numpy as np
 
 class FlyclientSampler:
@@ -12,9 +13,9 @@ class FlyclientSampler:
     k: float
     m: int
 
-    _secure_random: SystemRandom = None
+    _secure_random: SystemRandom | np.random.Generator = None
 
-    def __init__(self, a: int, N: int, L: int, c: float, seed: int | float | bytes | bytearray | str = None):
+    def __init__(self, a: int, N: int, L: int, c: float, seed: int = None):
         # probability of failure is bounded by 2**(-lambda)
         LAMBDA = 50
         # a = Flyclient activation height, or minimum cumulative difficulty (difficulty-aware case)
@@ -34,7 +35,7 @@ class FlyclientSampler:
             self.m = math.ceil((LAMBDA - math.log(c * N, 0.5)) / math.log(1 - (1 / math.log(self.delta, c)), 0.5))
             p_max = (1 - (1/self.k)) ** self.m
             assert p_max <= (2 ** (-LAMBDA)) / (c * N)
-            self._secure_random = SystemRandom(seed)
+            self._secure_random = np.random.Generator(ChaCha(seed=seed, rounds=8))
         else:
             self.m = math.ceil(LAMBDA / math.log(1 - (1 / math.log(self.delta, c)), 0.5))
             p_max = (1 - (1/self.k)) ** self.m

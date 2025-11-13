@@ -16,6 +16,7 @@ class FlyclientProof:
 
     client: ZcashClient
     sampler: FlyclientSampler
+    seed: int | None
     enable_logging: bool
     blockchaininfo: dict
     tip_height: int
@@ -118,9 +119,12 @@ class FlyclientProof:
         
         if self.non_interactive:
             tip_block = await self.client.download_header(self.tip_height, True)
-            self.sampler = FlyclientSampler(a, N, L, self.c, tip_block['hash'])
+            seed = int.from_bytes(bytes.fromhex(tip_block['hash']), byteorder='big')
+            self.sampler = FlyclientSampler(a, N, L, self.c, seed)
+            self.seed = seed
         else:
             self.sampler = FlyclientSampler(a, N, L, self.c)
+            self.seed = None
         
         if self.activation_height == 0:
             print("Activation height not found.")
@@ -196,6 +200,27 @@ class FlyclientProof:
             self.ancestry_paths[block_height] = ancestry_path
             self.upgrade_names_of_samples[block_height] = upgrade
             self.upgrades_needed.add(upgrade)
+    
+    def aggregate_proof(self) -> tuple[dict[str, set], dict[str, set]]:
+        blocks : dict[str, set] = dict()
+        download_set : dict[str, set] = dict()
+
+        for u in self.upgrades_needed:
+            blocks[u] = set()
+
+        for b in self.blocks_to_sample:
+            blocks[self.upgrade_names_of_samples[b]].add(b)
+        
+        for u in self.upgrades_needed:
+            if u == self.upgrade_name:
+                mmr = Tree([], self.activation_height)
+                download_set[u] = mmr.get_min_size_proof(blocks[u], self.tip_height - 1)
+            else:
+                _, next_activation_height = self.next_upgrade(u)
+                mmr = Tree([], self.get_activation_of_upgrade(u))
+                download_set[u] = mmr.get_min_size_proof(blocks[u], next_activation_height - 1)
+        
+        return (blocks, download_set)
 
     def prev_upgrade(self, upgrade_name: str) -> tuple[str, int] | None:
         for k, v in self.blockchaininfo['upgrades'].items():

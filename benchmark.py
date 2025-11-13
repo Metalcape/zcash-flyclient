@@ -74,24 +74,7 @@ class FlyclientBenchmark(FlyclientProof):
         return total_node_count
     
     def calculate_aggregate_proof_size(self) -> int:
-        blocks : dict[str, set] = dict()
-        download_set : dict[str, set] = dict()
-
-        for u in self.upgrades_needed:
-            blocks[u] = set()
-
-        for b in self.blocks_to_sample:
-            blocks[self.upgrade_names_of_samples[b]].add(b)
-        
-        for u in self.upgrades_needed:
-            if u == self.upgrade_name:
-                mmr = Tree([], self.activation_height)
-                download_set[u] = mmr.get_min_size_proof(blocks[u], self.tip_height - 1)
-            else:
-                _, next_activation_height = self.next_upgrade(u)
-                mmr = Tree([], self.get_activation_of_upgrade(u))
-                download_set[u] = mmr.get_min_size_proof(blocks[u], next_activation_height - 1)
-
+        _, download_set = self.aggregate_proof()
         total_count = 0
         for name, s in download_set.items():
             if self.enable_logging:

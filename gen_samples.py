@@ -1,6 +1,6 @@
 from benchmark import FlyclientBenchmark
 from zcash_client import ZcashClient, CONF_PATH
-from sampling import difficulty_to_sample
+from sampling import FlyclientSampler
 import pandas as pd
 import os
 import asyncio
@@ -13,6 +13,12 @@ SAMPLES_BANDWIDTH_HEIGHT = "experiments/samples_height.csv"
 SAMPLES_ATTACK_HEIGHT = "experiments/samples_attack_height.csv"
 SAMPLES_BANDWIDTH_DIFFICULTY = "experiments/samples_difficulty.csv"
 SAMPLES_ATTACK_DIFFICULTY = "experiments/samples_attack_difficulty.csv"
+
+SAMPLES_BANDWIDTH_HEIGHT_NI = "experiments/samples_height_ni.csv"
+SAMPLES_ATTACK_HEIGHT_NI = "experiments/samples_attack_height_ni.csv"
+SAMPLES_BANDWIDTH_DIFFICULTY_NI = "experiments/samples_difficulty_ni.csv"
+SAMPLES_ATTACK_DIFFICULTY_NI = "experiments/samples_attack_difficulty_ni.csv"
+
 ITERATIONS = 30
 
 # ACTIVATION_HEIGHT = 903000
@@ -42,12 +48,21 @@ class DifficultySampler:
             raise ValueError(f"No height found with work >= {target_work}")
         return self.heights[i]
     
-    async def sample(self, chaintip: int, c: float, L: int, min_diff: int,  max_diff: int, total_diff: int):     
+    async def sample(self, 
+                    chaintip: int, 
+                    c: float, 
+                    L: int, 
+                    min_diff: int,  
+                    max_diff: int, 
+                    total_diff: int, 
+                    seed: int | None = None):
+           
         max_L = math.trunc(c * (total_diff - 1))
         diff_L = total_diff - max_diff
         diff_L = min(max_L, diff_L)
-        
-        difficulty_samples = difficulty_to_sample(min_diff, total_diff, c, diff_L)
+
+        sampler = FlyclientSampler(min_diff, total_diff, diff_L, c, seed)
+        difficulty_samples = sampler.difficulty_to_sample()
         deterministic = [i for i in range(chaintip - L, chaintip)]
         random = await asyncio.gather(*[self.find_height(w) for w in difficulty_samples])
         random.sort()
@@ -78,7 +93,7 @@ async def gen_diffmap(file_path: int, start_height: int, end_height: int):
         print(df)
         df.to_csv(file_path)
 
-async def gen_samples(file_path: str, var_params: bool, with_diff: bool) -> pd.DataFrame:
+async def gen_samples(file_path: str, var_params: bool, with_diff: bool, non_interactive: bool) -> pd.DataFrame:
     async with ZcashClient.from_conf(CONF_PATH, persistent=True) as client:
         samples = pd.DataFrame(columns=sample_cols)
         params : list[tuple[int, float, int]] = list()
@@ -101,7 +116,8 @@ async def gen_samples(file_path: str, var_params: bool, with_diff: bool) -> pd.D
                 l, 
                 enable_logging=False, 
                 difficulty_aware=with_diff, 
-                override_chain_tip=h
+                override_chain_tip=h,
+                non_interactive=non_interactive
             ) for h, c, l in params])
         preset = [(h, c, l, obj) for (h, c, l), obj in zip(params, objects, strict=True)]
 
@@ -117,7 +133,8 @@ async def gen_samples(file_path: str, var_params: bool, with_diff: bool) -> pd.D
                         l,
                         obj.min_difficulty,
                         obj.max_difficulty,
-                        obj.total_difficulty
+                        obj.total_difficulty,
+                        obj.seed
                     ) for h, c, l, obj in preset])
                 new_rows = [
                     {'chaintip': h, 'c': c, 'L': l, 'samples': blocks} 
@@ -145,16 +162,21 @@ async def main():
         await gen_diffmap(DIFFMAP, START_HEIGHT, CHAINTIP)
 
     jobs = [
-        (SAMPLES_BANDWIDTH_HEIGHT, False, False),
-        (SAMPLES_BANDWIDTH_DIFFICULTY, False, True),
-        (SAMPLES_ATTACK_HEIGHT, True, False),
-        (SAMPLES_ATTACK_DIFFICULTY, True, True)
+        (SAMPLES_BANDWIDTH_HEIGHT, False, False, False),
+        (SAMPLES_BANDWIDTH_DIFFICULTY, False, True, False),
+        (SAMPLES_ATTACK_HEIGHT, True, False, False),
+        (SAMPLES_ATTACK_DIFFICULTY, True, True, False),
+
+        (SAMPLES_BANDWIDTH_HEIGHT_NI, False, False, True),
+        (SAMPLES_BANDWIDTH_DIFFICULTY_NI, False, True, True),
+        (SAMPLES_ATTACK_HEIGHT_NI, True, False, True),
+        (SAMPLES_ATTACK_DIFFICULTY_NI, True, True, True)
     ]
 
-    for filepath, var_params, with_diff in jobs:
+    for filepath, var_params, with_diff, ni in jobs:
         if not os.path.isfile(filepath):
             print(f"Generating file: {filepath}")
-            await gen_samples(filepath, var_params, with_diff)
+            await gen_samples(filepath, var_params, with_diff, ni)
 
 if __name__ == '__main__':
     asyncio.run(main())

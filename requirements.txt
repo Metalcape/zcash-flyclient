@@ -1,4 +1,5 @@
 numpy==2.2.5
 Requests==2.32.3
-pyequihash
-configparser
+pyequihash==0.2
+configparser==7.2.0
+randomgen==2.3.0

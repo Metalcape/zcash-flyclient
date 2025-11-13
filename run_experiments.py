@@ -14,6 +14,11 @@ DATASET_BANDWIDTH_DIFF = 'experiments/bandwidth_cost_diff.csv'
 DATASET_ATTACK_HEIGHT = 'experiments/attack_cost_height.csv'
 DATASET_ATTACK_DIFF = 'experiments/attack_cost_diff.csv'
 
+DATASET_BANDWIDTH_HEIGHT_NI = 'experiments/bandwidth_cost_height_ni.csv'
+DATASET_BANDWIDTH_DIFF_NI = 'experiments/bandwidth_cost_diff_ni.csv'
+DATASET_ATTACK_HEIGHT_NI = 'experiments/attack_cost_height_ni.csv'
+DATASET_ATTACK_DIFF_NI = 'experiments/attack_cost_diff_ni.csv'
+
 bandwidth_cols = ['height', 'sample_count', 'optimization_type', 'size']
 attack_cols = ['height', 'c', 'L', 'size', 'attack_cost']
 
@@ -72,7 +77,12 @@ async def main():
         (DATASET_BANDWIDTH_HEIGHT, SAMPLES_BANDWIDTH_HEIGHT, 'bandwidth'),
         (DATASET_BANDWIDTH_DIFF, SAMPLES_BANDWIDTH_DIFFICULTY, 'bandwidth'),
         (DATASET_ATTACK_HEIGHT, SAMPLES_ATTACK_HEIGHT, 'attack'),
-        (DATASET_ATTACK_DIFF, SAMPLES_ATTACK_DIFFICULTY, 'attack')
+        (DATASET_ATTACK_DIFF, SAMPLES_ATTACK_DIFFICULTY, 'attack'),
+
+        (DATASET_BANDWIDTH_HEIGHT_NI, SAMPLES_BANDWIDTH_HEIGHT_NI, 'bandwidth'),
+        (DATASET_BANDWIDTH_DIFF_NI, SAMPLES_BANDWIDTH_DIFFICULTY_NI, 'bandwidth'),
+        (DATASET_ATTACK_HEIGHT_NI, SAMPLES_ATTACK_HEIGHT_NI, 'attack'),
+        (DATASET_ATTACK_DIFF_NI, SAMPLES_ATTACK_DIFFICULTY_NI, 'attack')
     ]
 
     for filepath, sample_path, type in jobs:
