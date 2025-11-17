@@ -83,9 +83,12 @@ class FlyclientBenchmark(FlyclientProof):
         
         return total_count
     
-    def calculate_total_download_size_bytes(self, optimization : _OPT_TYPE = 'none') -> int:
+    def calculate_total_download_size_bytes(self, optimization : _OPT_TYPE = 'none', rice_coding: bool = False) -> int:
+        # Equihash solution: 512 x 21-bit integers -> 1344 bytes total size
+        # Using rice coding, each int is on average 14.5 bits long -> average size becomes 928 bits
+        equihash_size = 928 if rice_coding else 1344
         # version, hashPrevBlock, merkleRoot, blockCommitments, nTime, nBits, nonce, solutionSize, solution
-        header_size = 4 + 32 + 32 + 32 + 4 + 4 + 32 + 3 + 1344
+        header_size = 4 + 32 + 32 + 32 + 4 + 4 + 32 + 3 + equihash_size
         node_size = 244
         # Tip height, activation height, consensus branch id, upgrade name
         blockchaininfo_size = 4 + 4 + 8 + len(self.upgrade_name)
