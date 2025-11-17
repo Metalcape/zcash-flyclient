@@ -1,7 +1,6 @@
 from flyclient import FlyclientProof
 from zcash_client import ZcashClient, CONF_PATH
 from zcash_mmr import Node, generate_block_commitments
-from sampling import FlyclientSampler
 from ancestry_proof import AncestryNode, AncestryProof
 
 import json
@@ -222,6 +221,35 @@ class FlyclientDemo(FlyclientProof):
 
         return True
     
+    async def to_file(self, path: str):
+        proof = {
+            'blockchaininfo': {},
+            'blocks': {},
+            'authdataroot': {},
+            'nodes': {}
+        }
+
+        proof['blockchaininfo'] = self.blockchaininfo
+        
+        blocks, download_set = self.aggregate_proof()
+        headers = {
+            upgrade : await self.download_headers(heights)
+            for upgrade, heights in blocks.items()
+        }
+        
+        nodes = {
+            upgrade : [
+                await self.client.download_nodes_parallel(upgrade, nodes, True)
+            ]
+            for upgrade, nodes in download_set.items()
+        }
+
+        proof["blocks"] = headers
+        proof["nodes"] = nodes
+
+        with open(path, 'w') as outfile:
+            json.dump(proof, outfile, indent=4)
+    
 # PoW
 def verify_pow(block_header: dict) -> bool:
     pow_sol = bytes.fromhex(block_header["solution"])
@@ -247,10 +275,12 @@ async def main():
     # async with ZcashClient("flyclient", "", 8232, "127.0.0.1") as client:
     async with ZcashClient.from_conf(CONF_PATH, persistent=True) as client:
         await client.open()
-        proof = await FlyclientDemo.create(client, difficulty_aware=True, enable_logging=False, non_interactive=True)
+        proof = await FlyclientDemo.create(client, difficulty_aware=True, non_interactive=True, enable_logging=False)
         await proof.prefetch()
         if await proof.download_and_verify() is True:
             print("Success!")
+            await proof.to_file("proof.json")
+            print("Proof file written to ./proof.json")
         await client.close()
 
 if __name__ == "__main__":

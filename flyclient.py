@@ -323,6 +323,8 @@ class FlyclientProof:
         responses = await self.client.get_first_blocks_with_total_work(difficulty_strings)
 
         for r in responses:
+            if r is None:
+                raise RuntimeError("First block with total work request returned an empty response (possible database inconsistency)")
             random.add(r['height'])
         
         return list(random) + deterministic
