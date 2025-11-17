@@ -7,3 +7,4 @@ test.py
 experiments/*.txt
 experiments/*.csv
 profile.svg
+proof.json
