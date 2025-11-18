@@ -7,6 +7,7 @@ import asyncio
 
 class FlyclientBenchmark(FlyclientProof):
     _OPT_TYPE = Literal['none', 'cache', 'aggregate']
+    _ENC_TYPE = Literal['normal', 'rice_coding', 'flyclient_friendly']
 
     def __init__(self, 
                 client: ZcashClient, 
@@ -83,16 +84,25 @@ class FlyclientBenchmark(FlyclientProof):
         
         return total_count
     
-    def calculate_total_download_size_bytes(self, optimization : _OPT_TYPE = 'none', rice_coding: bool = False) -> int:
+    def calculate_total_download_size_bytes(self, optimization : _OPT_TYPE = 'none', encoding: _ENC_TYPE = 'normal') -> int:
         # Equihash solution: 512 x 21-bit integers -> 1344 bytes total size
         # Using rice coding, each int is on average 14.5 bits long -> average size becomes 928 bits
-        equihash_size = 928 if rice_coding else 1344
-        # version, hashPrevBlock, merkleRoot, blockCommitments, nTime, nBits, nonce, solutionSize, solution
-        header_size = 4 + 32 + 32 + 32 + 4 + 4 + 32 + 3 + equihash_size
+        equihash_size = 928 if encoding == 'rice_coding' else 1344
+
+        # Assume hard fork that changes PoW mechanism as such:
+        # H_heavy(H_light(B), nBits, timestamp, ChainHistoryRoot) < target
+        if encoding == 'flyclient_friendly':
+            # H_light(B), nBits, timestamp, ChainHistoryRoot
+            header_size = 32 + 4 + 4 + 32
+        else:
+            # version, hashPrevBlock, merkleRoot, blockCommitments, nTime, nBits, nonce, solutionSize, solution
+            header_size = 4 + 32 + 32 + 32 + 4 + 4 + 32 + 3 + equihash_size
+            # Auth data root
+            header_size += 32
+        
         node_size = 244
         # Tip height, activation height, consensus branch id, upgrade name
         blockchaininfo_size = 4 + 4 + 8 + len(self.upgrade_name)
-        authdataroot_size = 32
 
         if self.enable_logging:
             print(f"Blocks: {self.blocks_to_sample}, length = {len(self.blocks_to_sample)}")
@@ -106,7 +116,7 @@ class FlyclientBenchmark(FlyclientProof):
                 total_node_count = self.calculate_aggregate_proof_size()
             
         return (
-            (header_size + authdataroot_size) * (len(self.blocks_to_sample) + 1)
+            header_size * (len(self.blocks_to_sample) + 1)
             + node_size * total_node_count 
             + blockchaininfo_size
         )
