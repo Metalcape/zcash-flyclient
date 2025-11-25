@@ -377,9 +377,6 @@ class Tree:
                 download_set.add(node)
                 x = x + 2**h
         return download_set
-                    
-
-
-
-        
-
+    
+    def validate_min_size_proof(self, nodes: dict[int, dict]) -> bool: 
+        pass # TODO

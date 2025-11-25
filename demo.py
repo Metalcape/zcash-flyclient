@@ -1,8 +1,9 @@
 from flyclient import FlyclientProof
 from zcash_client import ZcashClient, CONF_PATH
-from zcash_mmr import Node, generate_block_commitments
+from zcash_mmr import Node, Tree, generate_block_commitments
 from ancestry_proof import AncestryNode, AncestryProof
 
+import math
 import json
 import asyncio
 import equihash
@@ -15,6 +16,10 @@ class FlyclientDemo(FlyclientProof):
     leaves: dict[int, int]
     node_cache: dict[str, dict[int, Node]]
     block_cache: dict[int, dict]
+
+    # Non-interactive proof
+    nodes: dict[str, dict[int, Node]] = None
+    blocks: dict[str, dict[int, dict]] = None
 
     def __init__(self, 
                 client: ZcashClient, 
@@ -223,24 +228,42 @@ class FlyclientDemo(FlyclientProof):
     
     async def to_file(self, path: str):
         proof = {
+            'parameters': {
+                'seed': self.seed,
+                'a': self.get_flyclient_activation(),
+                'N': self.tip_height,
+                'c': self.c,
+                'L': self.L,
+                'difficulty_aware': self.difficulty_aware,
+                'min_difficulty': self.min_difficulty,
+                'max_difficulty': self.max_difficulty,
+                'total_difficulty': self.total_difficulty
+            },
             'blockchaininfo': {},
             'blocks': {},
-            'authdataroot': {},
             'nodes': {}
         }
 
         proof['blockchaininfo'] = self.blockchaininfo
         
         blocks, download_set = self.aggregate_proof()
+        download_set = {upgrade: sorted(list(nodes)) for upgrade, nodes in download_set.items()}
         headers = {
             upgrade : await self.download_headers(heights)
             for upgrade, heights in blocks.items()
         }
+
+        for upgrade, header_dict in headers.items():
+            if upgrade not in ['heartwood', 'canopy']:
+                heights = header_dict.keys()
+                authdataroot_responses = await self.client.send_commands_parallel([("getauthdataroot", [h]) for h in heights])
+                for h, r in zip(heights, authdataroot_responses, strict=True):
+                    headers[upgrade][h]["authdataroot"] = r["result"]["auth_data_root"]
         
         nodes = {
-            upgrade : [
-                await self.client.download_nodes_parallel(upgrade, nodes, True)
-            ]
+            upgrade : {
+                i: n for i, n in zip(nodes, await self.client.download_nodes_parallel(upgrade, nodes, True))
+            }
             for upgrade, nodes in download_set.items()
         }
 
@@ -249,6 +272,66 @@ class FlyclientDemo(FlyclientProof):
 
         with open(path, 'w') as outfile:
             json.dump(proof, outfile, indent=4)
+
+    @classmethod
+    def from_file(cls, client: ZcashClient, file_path: str, enable_logging = False):
+        with open(file_path, 'r') as infile:
+            proof = json.load(infile)
+
+        params = proof['parameters']
+        blockchaininfo = proof['blockchaininfo']
+        c = params['c']
+        L = params['L']
+        difficulty_aware = params['difficulty_aware']
+        instance = cls(client, c, L, enable_logging, difficulty_aware, non_interactive=True)
+        instance.tip_height = params['N']
+        instance.blockchaininfo = blockchaininfo
+        instance.seed = params['seed']
+        (
+            instance.branch_id, 
+            instance.upgrade_name, 
+            instance.activation_height
+        ) = instance.get_network_upgrade_of_block(instance.tip_height)
+        
+        if difficulty_aware:
+            instance.min_difficulty = params['min_difficulty']
+            instance.max_difficulty = params['max_difficulty']
+            instance.total_difficulty = params['total_difficulty']
+
+        instance.nodes = proof['nodes']
+        instance.blocks = proof['blocks']
+        return instance
+
+    def verify_non_interactive(self) -> bool:
+        if not self.non_interactive or self.nodes is None or self.blocks is None:
+            raise RuntimeError("Called verify_non_interactive on an invalid (interactive or malformed) object")
+
+        # Verify PoW for each block
+        DIRECT_COMMITMENT_UPGRADES = ['heartwood', 'canopy']
+        for upgrade, block_dict in self.blocks.items():
+            for height, block in block_dict.items():
+                if verify_pow(block):
+                    if upgrade not in DIRECT_COMMITMENT_UPGRADES:
+                        chain_history_root = block['chainhistoryroot']
+                        auth_data_root = block['authdataroot']
+                        block_commitments = block['blockcommitments']
+                        gen_commitments = generate_block_commitments(chain_history_root, auth_data_root)
+                        if gen_commitments != block_commitments:
+                            raise RuntimeError(f"blockcommitments mismatch for block {height}")
+                        else:
+                            print(f"Validated block {height}")
+                else:
+                    raise RuntimeError(f"PoW validation failure for block {height}")
+        
+        # Verify global inclusion proof for each upgrade
+        for upgrade, node_dict in self.nodes.items():
+            mmr = Tree([], self.get_activation_of_upgrade(upgrade))
+            if not mmr.validate_min_size_proof(node_dict):
+                raise RuntimeError(f"Inclusion proof validation failure for upgrade {upgrade}")
+            else:
+                print(f"Validated MMR proof for {upgrade}")
+        
+        return True
     
 # PoW
 def verify_pow(block_header: dict) -> bool:
