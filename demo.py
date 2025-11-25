@@ -1,9 +1,8 @@
 from flyclient import FlyclientProof
 from zcash_client import ZcashClient, CONF_PATH
 from zcash_mmr import Node, Tree, generate_block_commitments
-from ancestry_proof import AncestryNode, AncestryProof
+from ancestry_proof import AncestryNode, AncestryProof, validate_min_size_proof
 
-import math
 import json
 import asyncio
 import equihash
@@ -252,6 +251,7 @@ class FlyclientDemo(FlyclientProof):
             upgrade : await self.download_headers(heights)
             for upgrade, heights in blocks.items()
         }
+        headers[self.upgrade_name][self.tip_height] = await self.download_header(self.tip_height)
 
         for upgrade, header_dict in headers.items():
             if upgrade not in ['heartwood', 'canopy']:
@@ -298,17 +298,32 @@ class FlyclientDemo(FlyclientProof):
             instance.max_difficulty = params['max_difficulty']
             instance.total_difficulty = params['total_difficulty']
 
-        instance.nodes = proof['nodes']
-        instance.blocks = proof['blocks']
+        instance.nodes = {
+            upgrade : {
+                int(i): n for i, n in node_dict.items()
+            }
+            for upgrade, node_dict in proof['nodes'].items()
+        }
+        instance.blocks = {
+            upgrade : {
+                int(i): n for i, n in block_dict.items()
+            }
+            for upgrade, block_dict in proof['blocks'].items()
+        }
         return instance
 
     def verify_non_interactive(self) -> bool:
         if not self.non_interactive or self.nodes is None or self.blocks is None:
             raise RuntimeError("Called verify_non_interactive on an invalid (interactive or malformed) object")
+        
+        root_headers: dict[str, dict] = {}
+        root_headers[self.upgrade_name] = self.tip_height
 
-        # Verify PoW for each block
+        # Verify PoW for each block and take note of root headers
         DIRECT_COMMITMENT_UPGRADES = ['heartwood', 'canopy']
         for upgrade, block_dict in self.blocks.items():
+            if upgrade != "heartwood":
+                root_headers[upgrade] = block_dict[min(block_dict.keys())]
             for height, block in block_dict.items():
                 if verify_pow(block):
                     if upgrade not in DIRECT_COMMITMENT_UPGRADES:
@@ -326,7 +341,14 @@ class FlyclientDemo(FlyclientProof):
         # Verify global inclusion proof for each upgrade
         for upgrade, node_dict in self.nodes.items():
             mmr = Tree([], self.get_activation_of_upgrade(upgrade))
-            if not mmr.validate_min_size_proof(node_dict):
+            nodes = { i: Node.from_dict(d) for i, d in node_dict.items() }
+            is_valid = validate_min_size_proof(
+                mmr, 
+                nodes, 
+                root_headers[upgrade]["chainhistoryroot"], 
+                self.get_branch_id_of_upgrade(upgrade)
+            )
+            if not is_valid:
                 raise RuntimeError(f"Inclusion proof validation failure for upgrade {upgrade}")
             else:
                 print(f"Validated MMR proof for {upgrade}")

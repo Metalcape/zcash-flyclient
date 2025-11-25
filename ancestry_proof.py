@@ -23,8 +23,8 @@ class AncestryProof:
     peak_index: int
     path: list[AncestryNode]
 
-    def __init__(self, first_leaf: Node, peaks: list[Node], path_to_peak: list[AncestryNode], peak_index: int):
-        self.rightmost_leaf = first_leaf
+    def __init__(self, last_leaf: Node, peaks: list[Node], path_to_peak: list[AncestryNode], peak_index: int):
+        self.rightmost_leaf = last_leaf
         self.peaks = peaks
         self.path = path_to_peak
         self.peak_index = peak_index
@@ -89,3 +89,34 @@ def path_to_root(peak: int, peak_height: int, leaf_index: int) -> list:
         h = h - 1
     node_path.reverse()
     return node_path
+
+def validate_min_size_proof(mmr: Tree, nodes: dict[int, Node], expected_hash: str, branch_id: str) -> bool: 
+    last_key = max(nodes.keys())
+    end_height = nodes[last_key].nLatestHeight
+    peaks_with_heights = [(i, h) for i, h in zip(mmr.peaks_at(end_height), mmr.peak_heights_at(end_height))]
+    
+    peak_nodes = {
+        index: { 
+            "node": derive_peak_at(index, height, nodes, mmr),
+            "height": height
+        } for index, height in peaks_with_heights
+    }
+    
+    proof = AncestryProof(
+        peak_nodes[max(peak_nodes.keys())],
+        [item["node"] for _, item in peak_nodes.items()],
+        None,
+        0
+    )
+    
+    return proof.verify_root_from_peaks(expected_hash, branch_id)
+
+def derive_peak_at(peak_index: int, peak_height: int, nodes: dict[int, Node], tree: Tree) -> Node | None:
+    assert peak_height >= 0
+    if peak_index in nodes.keys():
+        return nodes[peak_index]
+    else:
+        return make_parent(
+            derive_peak_at(tree.left_child(peak_index, peak_height), peak_height-1, nodes, tree), 
+            derive_peak_at(tree.right_child(peak_index), peak_height-1, nodes, tree)
+        )
