@@ -146,6 +146,7 @@ class FlyclientProof:
             self.blocks_to_sample = await self.sample_blocks_with_difficulty()
         else:
             self.blocks_to_sample = self.sample_blocks()
+        self.blocks_to_sample.sort()
         self.blocks_to_sample += self.get_activation_blocks(self.blocks_to_sample[0])
         self.blocks_to_sample.sort()
 
@@ -212,12 +213,11 @@ class FlyclientProof:
             blocks[self.upgrade_names_of_samples[b]].add(b)
         
         for u in self.upgrades_needed:
+            mmr = Tree([], self.get_activation_of_upgrade(u))
             if u == self.upgrade_name:
-                mmr = Tree([], self.activation_height)
                 download_set[u] = mmr.get_min_size_proof(blocks[u], self.tip_height - 1)
             else:
                 _, next_activation_height = self.next_upgrade(u)
-                mmr = Tree([], self.get_activation_of_upgrade(u))
                 download_set[u] = mmr.get_min_size_proof(blocks[u], next_activation_height - 1)
         
         return (blocks, download_set)

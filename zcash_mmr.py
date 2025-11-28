@@ -264,6 +264,14 @@ class Tree:
             leaf = Tree.right_child(leaf)
             h = h - 1
         return leaf
+    
+    @staticmethod
+    def leftmost_leaf(index: int, h: int) -> int:
+        leaf = index
+        while h > 0:
+            leaf = Tree.left_child(leaf, h)
+            h = h - 1
+        return leaf
 
     def insertion_index_of_block(self, height: int) -> int | None:
         diff = height - self.__activation_height__
@@ -333,7 +341,6 @@ class Tree:
         peak_h: int = 0
         peaks = self.peaks_at(rightmost_block)
         peak_heights = self.peak_heights_at(rightmost_block)
-        assert len(peaks) == len(peak_heights)
         leaf = self.node_index_of_block(block)
         for (j, peak) in enumerate(peaks):
             if leaf < peak:
@@ -341,8 +348,14 @@ class Tree:
                 break
         return (j, peak_h)
     
+    def get_peak_of_node(self, peaks: list[int], node: int) -> int | None:
+        for peak in sorted(peaks):
+            if node <= peak:
+                return peak
+        return None
+    
     def get_min_size_proof(self, blocks: list | set, last_block: int) -> set[int]:
-        block_intervals = list()
+        block_intervals: list[tuple[int, int]] = list()
         download_set = set()
         
         block_list = list(blocks)
@@ -355,26 +368,27 @@ class Tree:
             block_intervals.append((current, b - 1))
             current = b + 1
         block_intervals.append((block_list[-1] + 1, last_block))
-
+        
         for interval in block_intervals:
             # For each interval
             x = interval[0]
             y = interval[1]
             while x <= y:
-                # Get the tallest parent that does not fall out of the interval
+                # Get the rightmost peak that covers the interval
                 start = self.node_index_of_block(x)
-                end = self.node_index_of_block(y)
-                node = start
-                h = 0
-                while x % 2 == 0:
-                    parent = self.parent_from_left(node, h)
-                    rightmost_leaf = self.rightmost_leaf(parent, h+1)
-                    if rightmost_leaf > end:
-                        break
-                    node = parent
-                    h = h + 1
-                    # Add the parent and advance x past the rightmost leaf covered by the parent
-                download_set.add(node)
-                x = x + 2**h
+                peaks = self.peaks_at(y)
+                heights = self.peak_heights_at(y)
+                rightmost_peak = {"index": peaks[-1], "height": heights[-1]}
+                # Get the leftmost leaf that belongs to that peak
+                leftmost_leaf = self.leftmost_leaf(rightmost_peak["index"], rightmost_peak["height"])
+                # If we fall within the interval, add the peak to the download set and shorten the interval
+                # By 2**(its height). Otherwise, take its right child as the new rightmost peak and repeat.
+                while leftmost_leaf < start:
+                    rightmost_peak["index"] = self.right_child(rightmost_peak["index"])
+                    rightmost_peak["height"] -= 1
+                    leftmost_leaf = self.leftmost_leaf(rightmost_peak["index"], rightmost_peak["height"])
+                download_set.add(rightmost_peak["index"])
+                y = y - 2**rightmost_peak["height"]
+                
         return download_set
 

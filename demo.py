@@ -30,6 +30,8 @@ class FlyclientDemo(FlyclientProof):
                 non_interactive = False):
         
         super(FlyclientDemo, self).__init__(client, c, L, override_chain_tip, enable_logging, difficulty_aware, non_interactive)
+        self.block_cache = dict()
+        self.node_cache = dict()
     
     async def download_auth_data_root(self, height) -> str | None:
         result = await self.client.download_extra_data("getauthdataroot", height)
@@ -322,8 +324,12 @@ class FlyclientDemo(FlyclientProof):
         # Verify PoW for each block and take note of root headers
         DIRECT_COMMITMENT_UPGRADES = ['heartwood', 'canopy']
         for upgrade, block_dict in self.blocks.items():
-            if upgrade != "heartwood":
-                root_headers[upgrade] = block_dict[min(block_dict.keys())]
+            if upgrade == self.upgrade_name:
+                root_headers[upgrade] = block_dict[self.tip_height]
+            else:
+                next_upgrade, _ = self.next_upgrade(upgrade)
+                next_block_dict = self.blocks[next_upgrade]
+                root_headers[upgrade] = next_block_dict[min(next_block_dict.keys())]
             for height, block in block_dict.items():
                 if verify_pow(block):
                     if upgrade not in DIRECT_COMMITMENT_UPGRADES:
