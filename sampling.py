@@ -57,6 +57,12 @@ class FlyclientSampler:
         random = self.sample(self.m, self.a, self.N - self.L)
         return np.concatenate((random, np.asarray(deterministic, dtype=np.float64))).round().astype(int).tolist()
 
-    def difficulty_to_sample(self) -> list[int]:
-        random = self.sample(self.m, self.a, self.N - self.L)
+    def difficulty_to_sample(self, min_difficulty: int, max_difficulty: int, total_difficulty: int) -> list[int]:
+        # Estimate the dificulty-aware L as the total_difficulty - max_difficulty
+        # L is the fraction of difficulty that is always sampled
+        max_L = math.trunc(self.c * (total_difficulty - 1))
+        diff_L = total_difficulty - max_difficulty
+        diff_L = min(max_L, diff_L)
+
+        random = self.sample(self.m, min_difficulty, total_difficulty - diff_L)
         return random.round().astype(int).tolist()

@@ -102,20 +102,9 @@ class FlyclientProof:
             self.max_difficulty = int.from_bytes(bytes.fromhex(max_diff_response["total_work"]), byteorder='big')
             self.total_difficulty = int.from_bytes(bytes.fromhex(total_diff_response["total_work"]), byteorder='big')
 
-            # Estimate the dificulty-aware L as the total_difficulty - max_difficulty
-            # L is the fraction of difficulty that is always sampled
-            max_L = math.trunc(self.c * (self.total_difficulty - 1))
-            diff_L = self.total_difficulty - self.max_difficulty
-            diff_L = min(max_L, diff_L)
-
-            a = self.min_difficulty
-            N = self.total_difficulty
-            L = diff_L
-            
-        else:
-            a = flyclient_activation
-            N = self.tip_height
-            L = self.L
+        a = flyclient_activation
+        N = self.tip_height
+        L = self.L
         
         if self.non_interactive:
             tip_block = await self.client.download_header(self.tip_height, True)
@@ -311,7 +300,7 @@ class FlyclientProof:
         if self.sampler is None:
             return None
         else:
-            difficulty_samples = self.sampler.difficulty_to_sample()
+            difficulty_samples = self.sampler.difficulty_to_sample(self.min_difficulty, self.max_difficulty, self.total_difficulty)
 
         deterministic = [i for i in range(self.tip_height - self.L, self.tip_height)]
         random = set()
