@@ -22,14 +22,15 @@ class FlyclientDemo(FlyclientProof):
 
     def __init__(self, 
                 client: ZcashClient, 
+                N_a: float = None,
                 c: float = 0.5, 
-                L: int = 100, 
+                L: int = 100,
                 override_chain_tip: int | None = None, 
                 enable_logging = True, 
                 difficulty_aware = False, 
                 non_interactive = False):
         
-        super(FlyclientDemo, self).__init__(client, c, L, override_chain_tip, enable_logging, difficulty_aware, non_interactive)
+        super(FlyclientDemo, self).__init__(client, N_a, c, L, override_chain_tip, enable_logging, difficulty_aware, non_interactive)
         self.block_cache = dict()
         self.node_cache = dict()
     
@@ -386,7 +387,7 @@ async def main():
     # async with ZcashClient("flyclient", "", 8232, "127.0.0.1") as client:
     async with ZcashClient.from_conf(CONF_PATH, persistent=True) as client:
         await client.open()
-        proof = await FlyclientDemo.create(client, difficulty_aware=True, non_interactive=True, enable_logging=False)
+        proof = await FlyclientDemo.create(client, N_a=50, difficulty_aware=True, non_interactive=True, enable_logging=False)
         await proof.prefetch()
         if await proof.download_and_verify() is True:
             print("Success!")

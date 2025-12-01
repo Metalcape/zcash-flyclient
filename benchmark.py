@@ -10,7 +10,8 @@ class FlyclientBenchmark(FlyclientProof):
     _ENC_TYPE = Literal['normal', 'rice_coding', 'flyclient_friendly']
 
     def __init__(self, 
-                client: ZcashClient, 
+                client: ZcashClient,
+                N_a: float = None,
                 c: float = 0.5, 
                 L: int = 100, 
                 override_chain_tip: int | None = None, 
@@ -18,7 +19,7 @@ class FlyclientBenchmark(FlyclientProof):
                 difficulty_aware = False, 
                 non_interactive = False):
         
-        super(FlyclientBenchmark, self).__init__(client, c, L, override_chain_tip, enable_logging, difficulty_aware, non_interactive)
+        super(FlyclientBenchmark, self).__init__(client, N_a, c, L, override_chain_tip, enable_logging, difficulty_aware, non_interactive)
     
     def generate_sample_set(self, length: int, with_difficulty : bool = True) -> list[list[int]]:
         samples : list[list[int]] = list()
@@ -129,7 +130,7 @@ async def main():
         # proof = FlyclientBenchmark(client, enable_logging=True, difficulty_aware=True, override_chain_tip=903809)
         # proof.prefetch([903803, 903806])
         
-        proof = await FlyclientBenchmark.create(client, enable_logging=False, difficulty_aware=True)
+        proof = await FlyclientBenchmark.create(client, N_a=50, enable_logging=False, difficulty_aware=True)
         await proof.prefetch()
         # await proof.prefetch_fake_chain(15, [('nu1', 0), ('nu2', 6)], [3, 5, 9])
         print(f"Unoptimized: {proof.calculate_total_download_size_bytes('none')}")

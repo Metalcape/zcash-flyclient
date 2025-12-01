@@ -2,9 +2,11 @@ from zcash_client import ZcashClient
 from zcash_mmr import *
 from sampling import FlyclientSampler
 from ancestry_proof import path_to_root
+from parameter_optimizer import find_opt_c, opt_eq, opt_eq_ni
 import asyncio
 
 class FlyclientProof:
+    N_a: float
     c: float
     L: float
     difficulty_aware: bool
@@ -39,21 +41,23 @@ class FlyclientProof:
     @classmethod
     async def create(cls, 
                     client: ZcashClient, 
-                    c: float = 0.5, 
-                    L: int = 100, 
+                    N_a: float = None,
+                    c: float = 0.5,
+                    L: int = 100,
                     override_chain_tip: int | None = None, 
                     enable_logging=True, 
                     difficulty_aware = False, 
                     non_interactive = False):
         
-        instance = cls(client, c, L, override_chain_tip, enable_logging, difficulty_aware, non_interactive)
+        instance = cls(client, N_a, c, L, override_chain_tip, enable_logging, difficulty_aware, non_interactive)
         await instance.initialize()
         return instance
 
     def __init__(self, 
                 client: ZcashClient, 
-                c: float = 0.5, 
-                L: int = 100, 
+                N_a: float = None,
+                c: float = 0.5,
+                L: int = 100,
                 override_chain_tip: int | None = None, 
                 enable_logging = True, 
                 difficulty_aware = False, 
@@ -65,15 +69,21 @@ class FlyclientProof:
         self.difficulty_aware = difficulty_aware
         self.non_interactive = non_interactive
 
-        # Check that c and L are valid
-        if c <= 0 or c >= 1:
-            print("c should be between 0 and 1. Falling back to c = 0.5")
-            c = 0.5
-        if L <= 0:
-            print("L should be positive. Falling back to L = 100")
-            L = 100
-        self.c = c
-        self.L = L
+        # Check that attacker parameters are valid
+        if N_a is None:
+            if c <= 0 or c >= 1:
+                print("c should be between 0 and 1. Falling back to c = 0.5")
+                c = 0.5
+            if L <= 0:
+                print("L should be positive. Falling back to L = 100")
+                L = 100
+            self.c = c
+            self.L = L
+        else:
+            if N_a <= 0:
+                print("N_a should be positive. Falling back to N_a = 50")
+                N_a = 50.0
+            self.N_a = N_a
 
     async def initialize(self):
         # Get the tip and activation height
@@ -86,6 +96,15 @@ class FlyclientProof:
             self.tip_height = int(self.blockchaininfo["blocks"]) - 100
         
         (self.branch_id, self.upgrade_name, self.activation_height) = self.get_network_upgrade_of_block(self.tip_height)
+
+        if self.N_a is not None:
+            if self.non_interactive:
+                self.c = await find_opt_c(opt_eq_ni, 50, self.tip_height, self.N_a)
+            else:
+                self.c = await find_opt_c(opt_eq, 50, self.tip_height, self.N_a)
+            self.L = math.ceil(self.N_a / self.c)
+        else:
+            self.N_a = self.c * self.L
 
         max_L = math.trunc(self.c * (self.tip_height - flyclient_activation))
         self.L = min(self.L, max_L)
