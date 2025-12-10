@@ -7,7 +7,6 @@ import asyncio
 
 class FlyclientBenchmark(FlyclientProof):
     _OPT_TYPE = Literal['none', 'cache', 'aggregate']
-    _ENC_TYPE = Literal['normal', 'rice_coding', 'flyclient_friendly']
 
     def __init__(self, 
                 client: ZcashClient,
@@ -85,19 +84,15 @@ class FlyclientBenchmark(FlyclientProof):
         
         return total_count
     
-    def calculate_total_download_size_bytes(self, optimization : _OPT_TYPE = 'none', encoding: _ENC_TYPE = 'normal') -> int:
-        # Equihash solution: 512 x 21-bit integers -> 1344 bytes total size
-        # Using rice coding, each int is on average 14.5 bits long -> average size becomes 928 bits
-        equihash_size = 928 if encoding == 'rice_coding' else 1344
-
+    def calculate_total_download_size_bytes(self, optimization : _OPT_TYPE = 'none', is_alt_pow: bool = False) -> int:
         # Assume hard fork that changes PoW mechanism as such:
         # H_heavy(H_light(B), nBits, timestamp, ChainHistoryRoot) < target
-        if encoding == 'flyclient_friendly':
+        if is_alt_pow:
             # H_light(B), nBits, timestamp, ChainHistoryRoot
             header_size = 32 + 4 + 4 + 32
         else:
             # version, hashPrevBlock, merkleRoot, blockCommitments, nTime, nBits, nonce, solutionSize, solution
-            header_size = 4 + 32 + 32 + 32 + 4 + 4 + 32 + 3 + equihash_size
+            header_size = 4 + 32 + 32 + 32 + 4 + 4 + 32 + 3 + 1344
             # Auth data root
             header_size += 32
         
