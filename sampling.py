@@ -18,10 +18,10 @@ class FlyclientSampler:
     def __init__(self, a: int, N: int, L: int, c: float, seed: int = None):
         # probability of failure is bounded by 2**(-lambda)
         LAMBDA = 50
-        # a = Flyclient activation height, or minimum cumulative difficulty (difficulty-aware case)
-        # N = chain length, or total cumulative difficulty (difficulty-aware case)
+        # a = Flyclient activation height
+        # N = chain length
         # c = attacker success probability
-        # L = amount of blocks (or total difficulty) that is always sampled
+        # L = amount of blocks that is always sampled
         self.a = a
         self.N = N
         self.L = L
