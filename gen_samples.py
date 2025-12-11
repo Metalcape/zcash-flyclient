@@ -1,7 +1,6 @@
 from benchmark import FlyclientBenchmark
 from zcash_client import ZcashClient, CONF_PATH
 from sampling import FlyclientSampler
-from parameter_optimizer import find_opt_c, opt_eq, opt_eq_ni
 import pandas as pd
 import os
 import asyncio

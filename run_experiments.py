@@ -1,6 +1,6 @@
 from benchmark import FlyclientBenchmark
 from zcash_client import ZcashClient, CONF_PATH
-from typing import Literal, get_args
+from typing import get_args
 import pandas as pd
 import numpy as np
 import os
