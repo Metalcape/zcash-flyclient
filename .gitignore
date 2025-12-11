@@ -1,4 +1,5 @@
 venv/
+temp
 .vscode
 zcash.conf
 __pycache__
