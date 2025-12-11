@@ -228,7 +228,7 @@ class FlyclientDemo(FlyclientProof):
 
         return True
     
-    async def to_file(self, path: str):
+    async def to_dict(self) -> dict:
         proof = {
             'parameters': {
                 'seed': self.seed,
@@ -272,9 +272,12 @@ class FlyclientDemo(FlyclientProof):
 
         proof["blocks"] = headers
         proof["nodes"] = nodes
+        return proof
 
+    async def to_file(self, path: str):
         with open(path, 'w') as outfile:
-            json.dump(proof, outfile, indent=4)
+            dict = await self.to_dict()
+            json.dump(dict, outfile, indent=4)
 
     @classmethod
     def from_file(cls, client: ZcashClient, file_path: str, enable_logging = False):
