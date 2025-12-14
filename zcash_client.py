@@ -165,9 +165,9 @@ class ZcashClient:
             json_data = await asyncio.gather(*[r.json() for r in responses])
         return json_data
     
-    async def download_headers_parallel(self, block_heights: list[int]):
+    async def download_headers_parallel(self, block_heights: list[int], verbose: bool = True):
         """Download multiple block headers in parallel."""
-        commands = [("getblockheader", [height]) for height in block_heights]
+        commands = [("getblockheader", [height, verbose]) for height in block_heights]
         responses = await self.send_commands_parallel(commands)
         return [r['result'] for r in responses]
         
