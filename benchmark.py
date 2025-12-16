@@ -4,6 +4,8 @@ from zcash_mmr import Tree
 from typing import Literal
 
 import asyncio
+import gzip
+import pickle
 
 class FlyclientBenchmark(FlyclientProof):
     _OPT_TYPE = Literal['none', 'cache', 'aggregate']
@@ -42,8 +44,8 @@ class FlyclientBenchmark(FlyclientProof):
         self.is_fake = True
         await self.prefetch(samples)
 
-    def calculate_proof_size(self, cache_nodes : bool) -> int:
-        nodes: dict[str, list] = dict()
+    def nodes_to_download(self, cache_nodes: bool) -> dict[str, list | set]:
+        nodes: dict[str, list | dict] = dict()
         # Populate initial list with nodes from sampled blocks
         mmrs : dict[str, Tree] = dict()
         for u in self.upgrades_needed:
@@ -59,32 +61,56 @@ class FlyclientBenchmark(FlyclientProof):
             for i in range(len(self.peaks[upgrade])):
                 if i != self.peak_indices[b]:
                     nodes[upgrade].append(self.peaks[upgrade][i])
+        if cache_nodes:
+            nodes = { k: set(v) for k, v in nodes.items() }
+        return nodes
 
-        # Count nodes, cache duplicates if requested
+    def calculate_proof_size(self, optimization : _OPT_TYPE) -> int:
+        match optimization:
+            case 'none':
+                nodes = self.nodes_to_download(False)
+            case 'cache':
+                nodes = self.nodes_to_download(True)
+            case 'aggregate':
+                _, nodes = self.aggregate_proof()
         total_node_count = 0
         for name, l in nodes.items():
-            if cache_nodes:
-                s = set(l)
-                if self.enable_logging:
-                    print(f"{name}: {s}, length = {len(s)}")
-                total_node_count += len(set(s))
-            else:
-                if self.enable_logging:
-                    print(f"{name}: {l}, length = {len(l)}")
-                total_node_count += len(l)
+            if self.enable_logging:
+                print(f"{name}: {l}, length = {len(l)}")
+            total_node_count += len(l)
         return total_node_count
     
-    def calculate_aggregate_proof_size(self) -> int:
-        _, download_set = self.aggregate_proof()
-        total_count = 0
-        for name, s in download_set.items():
-            if self.enable_logging:
-                print(f"{name}: {s}, length = {len(s)}")
-            total_count += len(s)
+    async def calculate_compressed_proof_size(self, optimization : _OPT_TYPE, compress_each: bool = True) -> int:
+        blockchaininfo = gzip.compress(pickle.dumps(self.blockchaininfo))
+        match optimization:
+            case 'none':
+                blocks = self.blocks_to_sample
+                nodes = self.nodes_to_download(False)
+            case 'cache':
+                blocks = set(self.blocks_to_sample)
+                nodes = self.nodes_to_download(True)
+            case 'aggregate':
+                blocks, nodes = self.aggregate_proof()
         
-        return total_count
-    
-    def calculate_total_download_size_bytes(self, optimization : _OPT_TYPE = 'none', is_alt_pow: bool = False) -> int:
+        block_data = [ bytes.fromhex(s) for s in await self.client.download_headers_parallel(blocks, False)]
+        node_data = {
+            upgrade: [
+                bytes.fromhex(s) 
+                for s in await self.client.download_nodes_parallel(upgrade, heights, False)
+            ] 
+            for upgrade, heights in nodes.items() 
+        }
+
+        if compress_each:
+            comp_block_data = b''.join([gzip.compress(b, 9) for b in block_data])
+            comp_node_data = b''.join([b''.join([gzip.compress(n, 9) for n in l]) for _, l in node_data.items()])
+        else:
+            comp_block_data = gzip.compress(b''.join(block_data))
+            comp_node_data = gzip.compress(b''.join([b''.join(l) for l in node_data.values()]))
+        
+        return len(blockchaininfo) + len(comp_block_data) + len(comp_node_data)
+        
+    def calculate_total_download_size_bytes(self, optimization : _OPT_TYPE, is_alt_pow: bool = False) -> int:
         # Assume hard fork that changes PoW mechanism as such:
         # H_heavy(H_light(B), nBits, timestamp, ChainHistoryRoot) < target
         if is_alt_pow:
@@ -103,13 +129,7 @@ class FlyclientBenchmark(FlyclientProof):
         if self.enable_logging:
             print(f"Blocks: {self.blocks_to_sample}, length = {len(self.blocks_to_sample)}")
 
-        match optimization:
-            case 'none':
-                total_node_count = self.calculate_proof_size(False)
-            case 'cache':
-                total_node_count = self.calculate_proof_size(True)
-            case 'aggregate':
-                total_node_count = self.calculate_aggregate_proof_size()
+        total_node_count = self.calculate_proof_size(optimization)
             
         return (
             header_size * (len(self.blocks_to_sample) + 1)

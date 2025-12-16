@@ -31,13 +31,10 @@ def compress_proof(name: str):
                 match fmt:
                     case "gz":
                         comp_proof = gzip.compress(proof, 9)
-                        break
                     case "bz2":
                         comp_proof = bz2.compress(proof, 9)
-                        break
                     case "zstd":
                         comp_proof = zstd.compress(proof, 9)
-                        break
                     case "xz":
                         comp_proof = lzma.compress(proof, format=lzma.FORMAT_XZ, preset=lzma.PRESET_EXTREME)
                 outfile.write(comp_proof)
