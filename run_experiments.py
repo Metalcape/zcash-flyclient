@@ -20,29 +20,29 @@ DATASET_DIFF_NI = 'experiments/bandwidth_cost_diff_ni.csv'
 bandwidth_cols = ['height', 'sample_count', 'optimization_type', 'size']
 attack_cols = ['height', 'c', 'L', 'size', 'attack_cost']
 
-async def calc_total_size(client: ZcashClient, row: pd.Series, opt_lv: FlyclientBenchmark._OPT_TYPE, alt_pow: bool = False):
+async def calc_total_size(client: ZcashClient, row: pd.Series, opt_lv: FlyclientBenchmark._OPT_TYPE):
     print(f"Processing sample {row.chaintip, row.c, row.L}, opt_lv={opt_lv}")
     block_list = json.loads(row.samples)
     benchmark = await FlyclientBenchmark.create(client, row.c, row.L, override_chain_tip=row.chaintip, enable_logging=False)
     await benchmark.prefetch(block_list)
-    size = benchmark.calculate_total_download_size_bytes(optimization=opt_lv, is_alt_pow=alt_pow)
+    size = benchmark.calculate_total_download_size_bytes(optimization=opt_lv)
     print(f"Calculated size for {row.chaintip, row.c, row.L}, opt_lv={opt_lv} => {size / 2**20:.3} MiB")
     return size
 
-async def gen_dataset(file_path: str, samples_file: str, is_alt_pow: bool = False):
+async def gen_dataset(file_path: str, samples_file: str):
     print(f"Generating file: {file_path}")
     samples = pd.read_csv(samples_file)
     semaphore = asyncio.Semaphore(1000)
-    pow_type = 'flyclient_friendly' if is_alt_pow else 'default'
 
     async def bounded_calc(client: ZcashClient, row: pd.Series, opt_lv: FlyclientBenchmark._OPT_TYPE):
         async with semaphore:
-            return await calc_total_size(client, row, opt_lv, is_alt_pow)
+            return await calc_total_size(client, row, opt_lv)
     
     async with ZcashClient.from_conf(CONF_PATH, persistent=True) as client:
         await client.open()
         df_dict : dict[str, pd.DataFrame] = dict()
         for opt_lv in get_args(FlyclientBenchmark._OPT_TYPE):
+            pow_type = 'flyclient_friendly' if opt_lv is 'flyclient_friendly' else 'default'
             sizes = await asyncio.gather(*[bounded_calc(client, row, opt_lv) for row in samples.itertuples(index=False)])
             df_dict[opt_lv] = pd.DataFrame({
                 'chaintip': samples['chaintip'],

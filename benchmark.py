@@ -8,7 +8,7 @@ import gzip
 import pickle
 
 class FlyclientBenchmark(FlyclientProof):
-    _OPT_TYPE = Literal['none', 'cache', 'aggregate']
+    _OPT_TYPE = Literal['none', 'cache', 'aggregate', 'flyclient_friendly']
 
     def __init__(self, 
                 client: ZcashClient,
@@ -71,7 +71,7 @@ class FlyclientBenchmark(FlyclientProof):
                 nodes = self.nodes_to_download(False)
             case 'cache':
                 nodes = self.nodes_to_download(True)
-            case 'aggregate':
+            case 'aggregate' | 'flyclient_friendly':
                 _, nodes = self.aggregate_proof()
         total_node_count = 0
         for name, l in nodes.items():
@@ -79,6 +79,14 @@ class FlyclientBenchmark(FlyclientProof):
                 print(f"{name}: {l}, length = {len(l)}")
             total_node_count += len(l)
         return total_node_count
+    
+    def to_flyclient_friendly(block_header: dict) -> bytes:
+        return b''.join([
+            bytes.fromhex(block_header['previousblockhash']),
+            bytes.fromhex(block_header['blockcommitments']),
+            bytes.fromhex(block_header['bits']),
+            int.to_bytes(block_header['time'], 4)
+        ])
     
     async def calculate_compressed_proof_size(self, optimization : _OPT_TYPE, compress_each: bool = True) -> int:
         blockchaininfo = gzip.compress(pickle.dumps(self.blockchaininfo))
@@ -89,10 +97,15 @@ class FlyclientBenchmark(FlyclientProof):
             case 'cache':
                 blocks = set(self.blocks_to_sample)
                 nodes = self.nodes_to_download(True)
-            case 'aggregate':
+            case 'aggregate' | 'flyclient_friendly':
                 blocks, nodes = self.aggregate_proof()
         
-        block_data = [ bytes.fromhex(s) for s in await self.client.download_headers_parallel(blocks, False)]
+        if optimization is 'flyclient_friendly':
+            block_data = [
+                self.to_flyclient_friendly(b) for b in await self.client.download_headers_parallel(blocks, True)
+            ]
+        else:
+            block_data = [bytes.fromhex(s) for s in await self.client.download_headers_parallel(blocks, False)]
         node_data = {
             upgrade: [
                 bytes.fromhex(s) 
@@ -110,10 +123,10 @@ class FlyclientBenchmark(FlyclientProof):
         
         return len(blockchaininfo) + len(comp_block_data) + len(comp_node_data)
         
-    def calculate_total_download_size_bytes(self, optimization : _OPT_TYPE, is_alt_pow: bool = False) -> int:
+    def calculate_total_download_size_bytes(self, optimization : _OPT_TYPE) -> int:
         # Assume hard fork that changes PoW mechanism as such:
         # H_heavy(H_light(B), nBits, timestamp, ChainHistoryRoot) < target
-        if is_alt_pow:
+        if optimization == 'flyclient_friendly':
             # H_light(B), nBits, timestamp, ChainHistoryRoot
             header_size = 32 + 4 + 4 + 32
         else:
