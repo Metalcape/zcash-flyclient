@@ -6,6 +6,16 @@ from typing import Literal
 import asyncio
 import gzip
 import pickle
+import pandas as pd
+import json
+
+ACTIVATION_HEIGHT = 903000
+START_HEIGHT = 904000
+CHAINTIP = 3104000
+
+HEADERS = "experiments/headers.csv"
+HEADERS_BIN = "experiments/headers_bin.csv"
+NODES_BIN = "experiments/nodes.csv"
 
 class FlyclientBenchmark(FlyclientProof):
     _OPT_TYPE = Literal['none', 'cache', 'aggregate', 'flyclient_friendly']
@@ -80,15 +90,16 @@ class FlyclientBenchmark(FlyclientProof):
             total_node_count += len(l)
         return total_node_count
     
+    @staticmethod
     def to_flyclient_friendly(block_header: dict) -> bytes:
         return b''.join([
             bytes.fromhex(block_header['previousblockhash']),
             bytes.fromhex(block_header['blockcommitments']),
             bytes.fromhex(block_header['bits']),
-            int.to_bytes(block_header['time'], 4)
+            int.to_bytes(block_header['time'], 4, 'big')
         ])
     
-    async def calculate_compressed_proof_size(self, optimization : _OPT_TYPE, compress_each: bool = True) -> int:
+    async def calculate_compressed_proof_size(self, optimization : _OPT_TYPE, compress_each: bool = True) -> int:        
         blockchaininfo = gzip.compress(pickle.dumps(self.blockchaininfo))
         match optimization:
             case 'none':
@@ -99,19 +110,23 @@ class FlyclientBenchmark(FlyclientProof):
                 nodes = self.nodes_to_download(True)
             case 'aggregate' | 'flyclient_friendly':
                 blocks, nodes = self.aggregate_proof()
+                blocks = set.union(*blocks.values())
         
-        if optimization is 'flyclient_friendly':
+        if optimization == 'flyclient_friendly':
             block_data = [
-                self.to_flyclient_friendly(b) for b in await self.client.download_headers_parallel(blocks, True)
+                self.to_flyclient_friendly(b)
+                for b in await self.client.download_headers_parallel(blocks, True)
             ]
         else:
-            block_data = [bytes.fromhex(s) for s in await self.client.download_headers_parallel(blocks, False)]
+            block_data = [
+                bytes.fromhex(s) for s in await self.client.download_headers_parallel(blocks, False)
+            ]
+
         node_data = {
             upgrade: [
-                bytes.fromhex(s) 
-                for s in await self.client.download_nodes_parallel(upgrade, heights, False)
-            ] 
-            for upgrade, heights in nodes.items() 
+                bytes.fromhex(s) for s in await self.client.download_nodes_parallel(upgrade, ids, False)
+            ]
+            for upgrade, ids in nodes.items()
         }
 
         if compress_each:
