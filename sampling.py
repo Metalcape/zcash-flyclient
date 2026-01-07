@@ -66,3 +66,10 @@ class FlyclientSampler:
 
         random = self.sample(self.m, min_difficulty, total_difficulty - diff_L)
         return random.round().astype(int).tolist()
+    
+    def random_bytes(self, n: int) -> bytes:
+        match self._secure_random:
+            case SystemRandom():
+                return self._secure_random.randbytes(n)
+            case np.random.Generator():
+                return self._secure_random.bytes(n)

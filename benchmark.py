@@ -6,8 +6,6 @@ from typing import Literal
 import asyncio
 import gzip
 import pickle
-import pandas as pd
-import json
 
 ACTIVATION_HEIGHT = 903000
 START_HEIGHT = 904000
@@ -89,14 +87,26 @@ class FlyclientBenchmark(FlyclientProof):
                 print(f"{name}: {l}, length = {len(l)}")
             total_node_count += len(l)
         return total_node_count
-    
-    @staticmethod
-    def to_flyclient_friendly(block_header: dict) -> bytes:
+
+    def distill_header(self, block_header: dict) -> bytes:
         return b''.join([
             bytes.fromhex(block_header['previousblockhash']),
             bytes.fromhex(block_header['blockcommitments']),
             bytes.fromhex(block_header['bits']),
-            int.to_bytes(block_header['time'], 4, 'big')
+            int.to_bytes(block_header['time'], 4, 'big'),
+            self.sampler.random_bytes(32)   # simulate mixhash for memory-hardness
+        ])
+
+    def distill_node(self, node: dict) -> bytes:
+        return b''.join([
+            bytes.fromhex(node['consensus_branch_id']),
+            bytes.fromhex(node['subtree_commitment']),
+            int.to_bytes(node['start_time'], 4, 'big'),
+            int.to_bytes(node['end_time'], 4, 'big'),
+            bytes.fromhex(node['subtree_total_work']),
+            int.to_bytes(node['start_height'], 4, 'big'),
+            int.to_bytes(node['end_height'], 4, 'big'),
+            self.sampler.random_bytes(32)   # simulate digest of unnecessary fields
         ])
     
     async def calculate_compressed_proof_size(self, optimization : _OPT_TYPE, compress_each: bool = True) -> int:        
@@ -114,20 +124,26 @@ class FlyclientBenchmark(FlyclientProof):
         
         if optimization == 'flyclient_friendly':
             block_data = [
-                self.to_flyclient_friendly(b)
+                self.distill_header(b)
                 for b in await self.client.download_headers_parallel(blocks, True)
             ]
+            node_data = {
+                upgrade: [
+                    self.distill_node(s) for s in await self.client.download_nodes_parallel(upgrade, ids, True)
+                ]
+                for upgrade, ids in nodes.items()
+            }
         else:
             block_data = [
                 bytes.fromhex(s) for s in await self.client.download_headers_parallel(blocks, False)
             ]
+            node_data = {
+                upgrade: [
+                    bytes.fromhex(s) for s in await self.client.download_nodes_parallel(upgrade, ids, False)
+                ]
+                for upgrade, ids in nodes.items()
+            }
 
-        node_data = {
-            upgrade: [
-                bytes.fromhex(s) for s in await self.client.download_nodes_parallel(upgrade, ids, False)
-            ]
-            for upgrade, ids in nodes.items()
-        }
 
         if compress_each:
             comp_block_data = b''.join([gzip.compress(b, 9) for b in block_data])

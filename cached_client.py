@@ -9,11 +9,13 @@ import os
 BLOCKCHAININFO = "experiments/blockchaininfo.json"
 HEADERS = "experiments/headers.csv"
 HEADERS_BIN = "experiments/headers_bin.csv"
-NODES_BIN = "experiments/nodes.csv"
+NODES = "experiments/nodes.csv"
+NODES_BIN = "experiments/nodes_bin.csv"
 DIFFMAP = "experiments/diffmap.csv"
 
 class CachedClient(ZcashClient):
     _bin_node_cache: dict[str, dict[int, str]] = {}
+    _node_cache: dict[str, dict[int, dict]] = {}
     _bin_header_cache: dict[int, str] = {}
     _header_cache: dict[int, dict] = {}
     _diff_cache: dict[int, int] = {}
@@ -34,13 +36,15 @@ class CachedClient(ZcashClient):
         print("Headers file loaded")
         headers_bin = pd.read_csv(HEADERS_BIN)
         print("Binary headers file loaded")
-        nodes_bin = pd.read_csv(NODES_BIN)
+        nodes = pd.read_csv(NODES)
         print("Nodes file loaded")
+        nodes_bin = pd.read_csv(NODES_BIN)
+        print("Binary nodes file loaded")
         diffmap = pd.read_csv(DIFFMAP)
         print("Difficulty map loaded")
 
         print("Building header cache")
-        cls._header_cache = { 
+        cls._header_cache = {
             k: json.loads(v) for k, v in zip(headers['height'], headers['header'], strict=True)
         }
         print("Building binary header cache")
@@ -56,8 +60,11 @@ class CachedClient(ZcashClient):
         ]
         
         for name, _ in upgrades:
-            df = nodes_bin.query("upgrade==@name")
+            df = nodes.query("upgrade==@name")
             print(f"Building node cache for {name}")
+            cls._node_cache[name] = {k: json.loads(v) for k, v in zip(df['id'], df['node'], strict=True)}
+            df = nodes_bin.query("upgrade==@name")
+            print(f"Building binary node cache for {name}")
             cls._bin_node_cache[name] = {k: v for k, v in zip(df['id'], df['node'], strict=True)}
         
         print("Building difficulty cache")
@@ -90,7 +97,7 @@ class CachedClient(ZcashClient):
         
     async def download_nodes_parallel(self, network_upgrade: str, nodes: list[int], verbose: bool):
         if verbose:
-            return await ZcashClient.download_nodes_parallel(network_upgrade, nodes, verbose)
+            return [self._node_cache[network_upgrade][i] for i in nodes]
         else:
             return [self._bin_node_cache[network_upgrade][i] for i in nodes]
 

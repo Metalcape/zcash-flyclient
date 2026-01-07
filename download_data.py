@@ -8,7 +8,8 @@ import os
 
 HEADERS = "experiments/headers.csv"
 HEADERS_BIN = "experiments/headers_bin.csv"
-NODES_BIN = "experiments/nodes.csv"
+NODES = "experiments/nodes.csv"
+NODES_BIN = "experiments/nodes_bin.csv"
 STEP = 15000
 
 async def gen_header_cache(file_path: str, verbose: bool):
@@ -28,7 +29,7 @@ async def gen_header_cache(file_path: str, verbose: bool):
         })
     df.to_csv(file_path, index=False)
 
-async def gen_node_cache(file_path: str):
+async def gen_node_cache(file_path: str, verbose: bool):
     print(f"Generating file: {file_path}")
     async with ZcashClient.from_conf(CONF_PATH) as client:
         upgrades = [
@@ -49,14 +50,14 @@ async def gen_node_cache(file_path: str):
             nodes = []
             for r in id_ranges:
                 # print(f"Downloading node range {(r[0], r[-1])}")
-                nodes += (await client.download_nodes_parallel(name, r, False))
+                nodes += (await client.download_nodes_parallel(name, r, verbose))
                 progress = len(nodes)
                 total = len(ids)
                 print(f"{progress} / {total} ({(progress/total * 100):.1f}%)")
             df_dict[name] = pd.DataFrame({
                 'upgrade': name,
                 'id': ids,
-                'node': nodes
+                'node': [json.dumps(n) for n in nodes] if verbose else nodes
             })
         df = pd.concat(df_dict.values())
     df.to_csv(file_path, index=False)
@@ -66,8 +67,10 @@ async def main():
         await gen_header_cache(HEADERS, True)
     if not os.path.isfile(HEADERS_BIN):
         await gen_header_cache(HEADERS_BIN, False)
+    if not os.path.isfile(NODES):
+        await gen_node_cache(NODES, True)
     if not os.path.isfile(NODES_BIN):
-        await gen_node_cache(NODES_BIN)
+        await gen_node_cache(NODES_BIN, False)
 
 if __name__ == '__main__':
     asyncio.run(main())
